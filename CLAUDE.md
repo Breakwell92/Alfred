@@ -120,6 +120,7 @@ Before finishing a ticket, update whichever of these your change affected. Never
 ### 4. Running tickets in parallel
 
 - Only work on tickets whose blockers are all **Done** or **QA**. Use `/next` to list them, or start several sessions with plain `/ticket`: each claims a different unassigned ticket. Several `/review` sessions can run at once too: each claims a different PR via the `in-review` label.
+- `/pm` is the project manager: it gives a project update (milestones, recent progress, what's outstanding, what needs Dan), then starts a fresh local `/ticket STU-xx` session for each free ticket, keeping at most **2** tickets In Development at once, and starts more as those finish. It never changes tickets or PRs itself. `/pm status` gives the update without starting anything.
 - Each parallel ticket gets its own git worktree and its own session, e.g. `git worktree add ../alfred-stu-49 -b <branch> main`. Never share a working directory between sessions.
 - Don't run two tickets at once that change the same core modules (router, connector registry, protocol, budget, shared `RequestContext`). If two Ready tickets overlap, do them one after the other.
 - Rebase on `main` before opening the PR; resolve conflicts in your own branch.

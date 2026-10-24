@@ -3,7 +3,13 @@ description: Review the next PR waiting for review (or a given ticket's PR); mer
 argument-hint: "[STU-xx]"
 ---
 
-Review an Alfred pull request, following section 5 of CLAUDE.md. You did not write this code; review it as a demanding outside reviewer. Use the GitHub REST API (`gh api repos/Breakwell92/Alfred/...`), since GraphQL isn't available in cloud sessions.
+Review an Alfred pull request, following section 5 of CLAUDE.md. You did not write this code; review it as a demanding outside reviewer.
+
+**Act as the reviewer account.** Every GitHub call in this review (listing PRs, labels, comments, reviews, merging) goes through `.claude/scripts/gh-as-reviewer.sh` instead of `gh`, e.g. `.claude/scripts/gh-as-reviewer.sh api repos/Breakwell92/Alfred/pulls`. It loads the reviewer account's token, so comments are authored by a different user from the one who opened the PR. Use the REST API (`api ...`); GraphQL isn't available in cloud sessions. Plain `git fetch`/`checkout` to read the branch is fine as-is.
+
+Before anything else:
+1. Run `.claude/scripts/gh-as-reviewer.sh api user --jq .login`. If it fails (no token file, e.g. in a cloud session), stop and tell me reviews must run on a machine set up with the reviewer token.
+2. Once you've chosen a PR (step 0), compare that login with the PR author (`user.login`). If they're the same, stop without touching the PR: the review would be self-authored.
 
 The rules that apply are the ones on `main`. If the checked-out branch is behind `main`, read `git show origin/main:CLAUDE.md` and `git show origin/main:.claude/commands/review.md` and follow those where they differ from your copy.
 

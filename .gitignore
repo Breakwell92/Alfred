@@ -39,3 +39,6 @@ Thumbs.db
 # Local CA certs for intercepted HTTPS (infra/certs/README.md)
 infra/certs/*
 !infra/certs/README.md
+
+# TTS demo output (server/scripts/tts_demo.py)
+tts-samples/

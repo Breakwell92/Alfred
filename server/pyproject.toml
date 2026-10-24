@@ -9,17 +9,36 @@ dependencies = [
     "agno>=3.1,<4",
     "fastapi>=0.115",
     "faster-whisper>=1.2",
+    "kokoro-onnx>=0.6",
     "numpy>=2.0",
+    # Provides the `onnxruntime` module for Kokoro and Piper TTS. Also runs on CPU; replaces
+    # the CPU-only `onnxruntime` package (see [tool.uv] below).
+    "onnxruntime-gpu>=1.22",
+    "piper-tts>=1.3",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",
+    "soxr>=0.5",
     "sqlalchemy>=2.0",
     "uvicorn[standard]>=0.32",
 ]
 
 [project.optional-dependencies]
 cuda = [
+    # cuBLAS/cuDNN for faster-whisper (STT, CUDA 12).
     "nvidia-cublas-cu12>=12.4,<13",
     "nvidia-cudnn-cu12>=9,<10",
+    # CUDA/cuDNN for onnxruntime-gpu (TTS), loaded with onnxruntime.preload_dlls().
+    "onnxruntime-gpu[cuda,cudnn]>=1.22",
+]
+
+[tool.uv]
+# kokoro-onnx and piper-tts depend on the CPU-only `onnxruntime`, which installs the same module
+# as `onnxruntime-gpu` and would overwrite it. Never install it: onnxruntime-gpu runs on CPU too.
+override-dependencies = ["onnxruntime; sys_platform == 'never'"]
+# The server runs on Windows or Linux x86-64; make the lock pick NVIDIA wheels that exist there.
+required-environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [dependency-groups]

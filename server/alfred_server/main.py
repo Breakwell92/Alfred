@@ -3,12 +3,16 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 
 from alfred_server import __version__
 from alfred_server.auth import require_api_token
-from alfred_server.config import get_settings
+from alfred_server.config import Settings, get_settings
+
+# Cheap to import: the TTS engines themselves are imported when they load.
+from alfred_server.voice.tts import LocalTTS, get_tts, voices_response
 
 
 @asynccontextmanager
@@ -19,7 +23,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Load the shared model once, before the first request, and warm it up.
         await asyncio.to_thread(lambda: get_stt().warmup())
+    if get_settings().tts_enabled:
+        # Loads Kokoro (warmed up) and the Piper fallback voice.
+        await asyncio.to_thread(get_tts)
     yield
+
+
+def tts_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> LocalTTS:
+    """The shared TTS, or 503 when it's disabled. Overridden in tests."""
+    if not settings.tts_enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "TTS is disabled")
+    return get_tts()
 
 
 def create_app() -> FastAPI:
@@ -44,6 +58,11 @@ def create_app() -> FastAPI:
     @protected.get("/me")
     def me() -> dict[str, bool]:
         return {"ok": True}
+
+    @protected.get("/voices")
+    def voices(tts: Annotated[LocalTTS, Depends(tts_dependency)]) -> dict[str, Any]:
+        """Installed TTS voices per engine, the default voice and the output sample rate."""
+        return voices_response(tts)
 
     app.include_router(protected)
     return app

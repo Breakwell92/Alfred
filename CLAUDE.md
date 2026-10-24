@@ -20,6 +20,8 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/alfred_server/__main__.py` | `python -m alfred_server`: runs uvicorn with host/port/log level from `Settings`. |
 | `server/alfred_server/voice/stt.py` | Speech-to-text: `SpeechToText` protocol, `Transcript`, `FasterWhisperSTT`, shared `get_stt()`. The app's lifespan loads it when `ALFRED_STT_ENABLED=true`. Model choice and benchmarks in `docs/decisions/0002-stt.md`. |
 | `server/scripts/bench_stt.py` | STT benchmark (latency, real-time factor, VRAM) over the WAV fixtures. |
+| `server/alfred_server/voice/tts.py` | Text-to-speech: `TextToSpeech` protocol, `VoiceConfig`, `SentenceSplitter`, `LocalTTS` (Kokoro on CUDA, Piper CPU fallback), shared `get_tts()`. Output is 24 kHz mono PCM16. `GET /voices` (protected) lists voices. Loaded at startup when `ALFRED_TTS_ENABLED=true`. Engines and benchmarks in `docs/decisions/0005-tts.md`. |
+| `server/scripts/download_tts_models.py`, `tts_demo.py`, `bench_tts.py` | Download Kokoro/Piper model files to `ALFRED_TTS_MODEL_DIR` (default `~/.cache/alfred/tts`); write a sample WAV per installed voice; benchmark time to first audio, CPU and VRAM. |
 | `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
 | `server/alfred_server/db.py` | `check_database()`; `python -m alfred_server.db` checks `ALFRED_DATABASE_URL` is reachable. |
 | `android/` | Android app `com.alfred.app` (Kotlin, Compose + Material 3, Koin, OkHttp, DataStore), Gradle KTS with a version catalog (`gradle/libs.versions.toml`). Unit tests in `app/src/test/`. See `android/README.md`. |
@@ -38,9 +40,12 @@ uv run ruff format                        # format (CI runs --check)
 uv run mypy alfred_server tests           # type check (lenient for now, pydantic plugin on)
 uv run python -m alfred_server            # run the server using ALFRED_* settings (default 127.0.0.1:8000)
 uv run pytest -m "not model"              # skip tests that download/load real speech models
-uv sync --extra cuda                      # + cuBLAS/cuDNN wheels for GPU STT (the 3090 box; not in CI)
+uv sync --extra cuda                      # + CUDA/cuDNN wheels for GPU STT and TTS (the 3090 box; not in CI)
 uv run python scripts/bench_stt.py --device cuda   # STT benchmark
 uv run python -m alfred_server.db         # check the server can reach Postgres
+uv run python scripts/download_tts_models.py       # Kokoro + Piper model files (~400 MB)
+uv run python scripts/tts_demo.py                  # sample WAV per voice into tts-samples/
+uv run python scripts/bench_tts.py                 # TTS time to first audio / VRAM
 ```
 
 `tests/test_db.py` has a Postgres smoke test that only runs when `TEST_DATABASE_URL` is set (CI sets it with a Postgres service; locally point it at the compose stack).
@@ -56,6 +61,10 @@ infra/scripts/check-models.sh             # prompt each model, show VRAM use
 ```
 
 `uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`.
+
+The TTS tests marked `model` skip unless the model files have been downloaded.
+
+`onnxruntime-gpu` provides the `onnxruntime` module (it also runs on CPU); `[tool.uv] override-dependencies` stops the CPU-only `onnxruntime` package that kokoro-onnx and piper-tts depend on from being installed over it. Keep it that way when adding ONNX-based packages.
 
 CI runs `uv sync --locked`, so after changing dependencies run `uv lock` (or `uv add <pkg>`) and commit `server/uv.lock`.
 

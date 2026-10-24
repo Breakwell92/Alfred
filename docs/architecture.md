@@ -11,7 +11,9 @@ Alfred is a personal, wake-word-activated Android voice assistant. Personal use 
   - a scheduler for timed and event-triggered tasks
 - **Cloud LLMs** (Claude, GPT, Gemini) are used only when enabled, under budget, and needed.
 
-The client and server talk over a WebSocket (see `docs/protocol.md` once it exists).
+The client and server talk over a WebSocket (see `docs/protocol.md` once it exists), reached over Tailscale (no exposed ports).
+
+**Auth:** the app sends a shared bearer token (`ALFRED_API_TOKEN`) on every request; the server requires it on every route except `GET /health`, and refuses everything (503) when no token is configured. The app shows connection status by polling `/health` and the authenticated `/me`. See `docs/decisions/0002-android-client-stack.md`.
 
 ## Repository layout
 

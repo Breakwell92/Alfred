@@ -14,13 +14,15 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | Path | What |
 | --- | --- |
 | `server/` | Python 3.12 package `alfred_server` (FastAPI + Agno), managed with `uv`. Tests in `server/tests/`. |
-| `server/alfred_server/main.py` | FastAPI app (`app`), built by `create_app()`. `GET /health` → `{"status":"ok"}`. |
+| `server/alfred_server/main.py` | FastAPI app (`app`), built by `create_app()`. `GET /health` → `{"status":"ok"}` (open); `GET /me` → `{"ok":true}` on the token-protected router. |
+| `server/alfred_server/auth.py` | `require_api_token`: bearer-token check against `ALFRED_API_TOKEN` (401 wrong/missing, 503 if unset). |
 | `server/alfred_server/config.py` | `Settings` (pydantic-settings) and `get_settings()`. |
 | `server/alfred_server/__main__.py` | `python -m alfred_server`: runs uvicorn with host/port/log level from `Settings`. |
-| `android/` | Android app (Kotlin + Compose). Placeholder until STU-51. |
+| `android/` | Android app `com.alfred.app` (Kotlin, Compose + Material 3, Koin, OkHttp, DataStore), Gradle KTS with a version catalog (`gradle/libs.versions.toml`). Unit tests in `app/src/test/`. See `android/README.md`. |
 | `infra/` | `docker-compose.yml` (services added from STU-48) and `.env.example`. |
 | `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
 | `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy (package and tests), pytest on every PR and push to `main`. |
+| `.github/workflows/android.yml` | CI for `android/`: `./gradlew lint testDebugUnitTest assembleDebug` on every PR and push to `main`; uploads the debug APK as an artifact. |
 
 ### Server commands (run in `server/`)
 
@@ -39,6 +41,19 @@ CI runs `uv sync --locked`, so after changing dependencies run `uv lock` (or `uv
 
 On a machine whose HTTPS traffic is intercepted (uv fails with `invalid peer certificate: UnknownIssuer`), set `UV_SYSTEM_CERTS=1`.
 
+### Android commands (run in `android/`)
+
+Needs JDK 21 and the Android SDK (`ANDROID_HOME`, or `sdk.dir` in git-ignored `android/local.properties`). On Windows, Android Studio's bundled JBR works: `export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"` (system Java 25 is too new for Gradle/AGP).
+
+```bash
+./gradlew lint testDebugUnitTest assembleDebug   # what CI runs
+./gradlew testDebugUnitTest                      # JVM unit tests only
+./gradlew installDebug                           # install on a phone connected over adb
+```
+
+- The app's default server URL is `alfred.serverUrl` in `android/gradle.properties` (`http://glados:8000`, the server's Tailscale name); override with `-Palfred.serverUrl=...`. Users can change it in Settings.
+- Gradle (Java) ignores the Windows certificate store. On a machine whose HTTPS is intercepted (e.g. AVG Web Shield; `PKIX path building failed` / `Could not initialize SSL context`), build a truststore that adds the intercepting root CA to the JBR's `lib/security/cacerts` with `keytool -importcert`, then `export JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=<that file> -Djavax.net.ssl.trustStorePassword=changeit"`. `-Djavax.net.ssl.trustStoreType=Windows-ROOT` does not work with Gradle.
+
 ### Configuration
 
 - All server config is read from environment variables by `alfred_server.config.Settings`, prefixed `ALFRED_` (e.g. `ALFRED_LOG_LEVEL`). The server also reads `server/.env` (its working directory with the commands above): for local runs, `cp infra/.env.example server/.env`.
@@ -46,10 +61,12 @@ On a machine whose HTTPS traffic is intercepted (uv fails with `invalid peer cer
 - `get_settings()` is `lru_cache`d. In tests, build `Settings(_env_file=None)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test.
 - `ALFRED_HOST` defaults to `127.0.0.1`. Listening on all interfaces (`0.0.0.0`) must be set explicitly (e.g. in compose).
 - Document every new variable in `infra/.env.example`, with no real values.
+- `ALFRED_API_TOKEN` (`SecretStr`) is the shared bearer token the Android app sends. Every route except `/health` must require it: add routes to the `protected` router in `main.py` (or `Depends(require_api_token)`). Unset → protected routes answer 503 (fail closed). FastAPI's `/docs`, `/redoc` and `/openapi.json` are disabled.
 
 ### Conventions
 
 - Python: ruff (line length 100, rules E/F/W/I/B/UP/SIM), type hints on public functions, pytest tests next to every feature.
+- Kotlin: official code style, Android lint must pass (CI), JVM unit tests (JUnit 4, coroutines-test, MockWebServer) for ViewModels and data classes. Design decisions in `docs/decisions/0002-android-client-stack.md`.
 - `.editorconfig` sets formatting basics; LF line endings (`.gitattributes`).
 - Licence: private, all rights reserved (`LICENSE`).
 

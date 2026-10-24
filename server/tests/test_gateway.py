@@ -153,9 +153,18 @@ def test_rejects_unknown_alias() -> None:
         gateway_model("gpt-4o", settings=settings())  # type: ignore[arg-type]
 
 
-def test_requires_api_key() -> None:
+@pytest.mark.parametrize("key", [None, ""])
+def test_requires_api_key(key: str | None) -> None:
     with pytest.raises(GatewayNotConfiguredError):
-        gateway_model("local-main", settings=settings(litellm_api_key=None))
+        gateway_model("local-main", settings=settings(litellm_api_key=key))
+
+
+def test_empty_api_key_from_env_counts_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # infra/.env.example ships `ALFRED_LITELLM_API_KEY=`, which loads as SecretStr("").
+    monkeypatch.setenv("ALFRED_LITELLM_API_KEY", "")
+
+    with pytest.raises(GatewayNotConfiguredError):
+        gateway_model("local-main", settings=Settings(_env_file=None))
 
 
 def test_reads_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -70,7 +70,7 @@ def gateway_model(
     if alias not in MODEL_ALIASES:
         raise ValueError(f"unknown model alias {alias!r}; expected one of {MODEL_ALIASES}")
     settings = settings or get_settings()
-    if settings.litellm_api_key is None:
+    if settings.litellm_api_key is None or not settings.litellm_api_key.get_secret_value():
         raise GatewayNotConfiguredError(
             "ALFRED_LITELLM_API_KEY is not set; see docs/infra.md#litellm-model-gateway"
         )

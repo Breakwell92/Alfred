@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from collections.abc import Iterator
@@ -8,8 +9,9 @@ import pytest
 from agno.db.sqlite import AsyncSqliteDb
 from agno.models.base import Model
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import OperationalError
 
+from alfred_server.agents.context import RequestContext
+from alfred_server.agents.echo import build_echo_agent
 from alfred_server.chat import agent_db_dependency, chat_model_dependency
 from alfred_server.config import Settings
 from alfred_server.main import create_app
@@ -40,11 +42,15 @@ class RecordingDb(AsyncSqliteDb):
         return await super().upsert_session(*args, **kwargs)
 
 
-class BrokenDb(RecordingDb):
-    """Storage whose database is down."""
+def unreachable_db(tmp_path: Path) -> RecordingDb:
+    """Real async Agno storage whose database can't be opened (the "file" is a directory).
 
-    async def get_session(self, *args: Any, **kwargs: Any) -> Any:
-        raise OperationalError("SELECT", {}, Exception("connection timeout expired"))
+    Like `AsyncPostgresDb` with Postgres down: every connect fails, and Agno logs and swallows
+    the errors rather than raising them.
+    """
+    db_dir = tmp_path / "agno.db"
+    db_dir.mkdir()
+    return RecordingDb(db_dir)
 
 
 class ChatHarness:
@@ -78,7 +84,7 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[ChatHar
 @pytest.fixture
 def broken_db_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[ChatHarness]:
     monkeypatch.setenv("ALFRED_API_TOKEN", TOKEN)
-    yield ChatHarness(BrokenDb(tmp_path / "agno.db"))
+    yield ChatHarness(unreachable_db(tmp_path))
 
 
 def sse_events(text: str) -> list[tuple[str, dict[str, Any]]]:
@@ -241,20 +247,28 @@ def test_storage_is_awaited(harness: ChatHarness) -> None:
     assert "upsert_session" in harness.db.awaited
 
 
-def test_chat_502_when_storage_is_down(broken_db_harness: ChatHarness) -> None:
+def test_agno_alone_hides_a_storage_outage(tmp_path: Path) -> None:
+    # Why chat checks storage first: Agno's run "succeeds" with no history and nothing saved.
+    proxy = FakeProxy(completion({"role": "assistant", "content": "Hello."}))
+    model = gateway_model(
+        "local-main",
+        settings=Settings(_env_file=None, litellm_api_key="sk-test"),
+        http_client=proxy.async_client(),
+    )
+    ctx = RequestContext.build(timezone="Europe/London", device_type="text", session_id="s1")
+    agent = build_echo_agent(ctx, db=unreachable_db(tmp_path), model=model)
+
+    run = asyncio.run(agent.arun("Hi", session_id="s1"))
+
+    assert run.content == "Hello."
+
+
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
+def test_503_when_storage_is_down(broken_db_harness: ChatHarness, path: str) -> None:
     broken_db_harness.reply_with(completion({"role": "assistant", "content": "Hello."}))
 
-    response = broken_db_harness.post("/chat", text="Hi", session_id="s1")
+    response = broken_db_harness.post(path, text="Hi", session_id="s1")
 
-    assert response.status_code == 502
-    assert response.json() == {"detail": "The agent run failed"}
-
-
-def test_stream_error_event_when_storage_is_down(broken_db_harness: ChatHarness) -> None:
-    broken_db_harness.reply_with(streamed_completion("Hello."))
-
-    response = broken_db_harness.post("/chat/stream", text="Hi", session_id="s1")
-
-    assert sse_events(response.text) == [
-        ("error", {"message": "The agent run failed", "session_id": "s1"})
-    ]
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Conversation storage is unavailable"}
+    assert broken_db_harness.proxy.requests == []  # refused before calling the model

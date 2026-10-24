@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from alfred_server.agents.context import ID_PATTERN, DeviceType, RequestContext
 from alfred_server.agents.echo import build_echo_agent
-from alfred_server.agents.storage import get_agent_db
+from alfred_server.agents.storage import StorageUnavailableError, check_agent_db, get_agent_db
 from alfred_server.config import Settings, get_settings
 from alfred_server.models.gateway import GatewayNotConfiguredError
 
@@ -49,6 +49,23 @@ class ChatResponse(BaseModel):
 def agent_db_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> AsyncBaseDb:
     """Agno storage for sessions. Overridden in tests."""
     return get_agent_db(settings)
+
+
+async def ready_agent_db(
+    db: Annotated[AsyncBaseDb, Depends(agent_db_dependency)],
+) -> AsyncBaseDb:
+    """The agent db, or 503 if it can't be reached within a few seconds.
+
+    Without this, Agno would answer without history and silently drop the turn.
+    """
+    try:
+        await check_agent_db(db)
+    except StorageUnavailableError as exc:
+        logger.error("chat refused: %s", exc)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Conversation storage is unavailable"
+        ) from exc
+    return db
 
 
 def chat_model_dependency() -> Model | None:
@@ -77,12 +94,12 @@ def _build_agent(
 async def chat(
     body: ChatRequest,
     settings: Annotated[Settings, Depends(get_settings)],
-    db: Annotated[AsyncBaseDb, Depends(agent_db_dependency)],
+    db: Annotated[AsyncBaseDb, Depends(ready_agent_db)],
     model: Annotated[Model | None, Depends(chat_model_dependency)],
 ) -> ChatResponse:
     agent, session_id = _build_agent(body, settings, db, model)
-    # Agno reports model and storage failures (e.g. Postgres down) as an errored run; the
-    # except is a backstop for anything it lets escape.
+    # Agno reports model failures as an errored run; the except is a backstop for anything it
+    # lets escape. Storage was checked by `ready_agent_db`.
     try:
         run = await agent.arun(body.text, session_id=session_id)
     except Exception as exc:
@@ -98,7 +115,7 @@ async def chat(
 async def chat_stream(
     body: ChatRequest,
     settings: Annotated[Settings, Depends(get_settings)],
-    db: Annotated[AsyncBaseDb, Depends(agent_db_dependency)],
+    db: Annotated[AsyncBaseDb, Depends(ready_agent_db)],
     model: Annotated[Model | None, Depends(chat_model_dependency)],
 ) -> StreamingResponse:
     agent, session_id = _build_agent(body, settings, db, model)

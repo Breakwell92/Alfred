@@ -1,6 +1,8 @@
 import asyncio
 import os
 import re
+import socket
+import time
 import uuid
 from typing import Any
 
@@ -15,7 +17,13 @@ from alfred_server.agents import storage
 from alfred_server.agents.base import BASE_INSTRUCTIONS, build_agent
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.echo import build_echo_agent, make_get_time
-from alfred_server.agents.storage import AGNO_SCHEMA, CONNECT_TIMEOUT_S, get_agent_db
+from alfred_server.agents.storage import (
+    AGNO_SCHEMA,
+    CONNECT_TIMEOUT_S,
+    StorageUnavailableError,
+    check_agent_db,
+    get_agent_db,
+)
 from alfred_server.config import Settings
 from alfred_server.main import create_app
 from alfred_server.models.gateway import GatewayNotConfiguredError, gateway_model
@@ -160,3 +168,50 @@ def test_lifespan_sets_up_tracing_only_when_enabled(
         assert calls[0]["db"] is get_agent_db()
     # Queued spans are flushed when the app shuts down.
     assert len(shutdowns) == int(enabled)
+
+
+def run_selector(coro: Any) -> Any:
+    # psycopg async needs a selector loop (Windows defaults to Proactor).
+    return asyncio.run(coro, loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_storage_check_fails_fast_when_postgres_refuses() -> None:
+    # Nothing listens on port 1: the connection is refused.
+    db = storage._agent_db("postgresql+psycopg://u:p@127.0.0.1:1/x")
+
+    start = time.monotonic()
+    with pytest.raises(StorageUnavailableError):
+        run_selector(check_agent_db(db))
+
+    assert time.monotonic() - start < CONNECT_TIMEOUT_S + 2
+
+
+def test_storage_check_times_out_when_postgres_hangs() -> None:
+    # A listener that accepts TCP but never speaks Postgres: the handshake hangs.
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        db = storage._agent_db(f"postgresql+psycopg://u:p@127.0.0.1:{port}/x")
+
+        start = time.monotonic()
+        with pytest.raises(StorageUnavailableError):
+            run_selector(check_agent_db(db, timeout_s=0.5))
+
+        assert time.monotonic() - start < 3
+
+
+def test_storage_check_skips_dbs_without_an_engine() -> None:
+    asyncio.run(check_agent_db(InMemoryDb()))  # type: ignore[arg-type]
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL not set")
+def test_storage_check_passes_on_real_postgres() -> None:
+    assert TEST_DATABASE_URL
+    db = get_agent_db(Settings(_env_file=None, database_url=TEST_DATABASE_URL))
+
+    async def check() -> None:
+        await check_agent_db(db)
+        await db.db_engine.dispose()
+
+    run_selector(check())

@@ -1,4 +1,4 @@
-# 0002: Android client stack and server auth
+# 0003: Android client stack and server auth
 
 - **Status:** accepted
 - **Date:** 2026-10-24

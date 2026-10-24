@@ -18,6 +18,9 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/alfred_server/auth.py` | `require_api_token`: bearer-token check against `ALFRED_API_TOKEN` (401 wrong/missing, 503 if unset). |
 | `server/alfred_server/config.py` | `Settings` (pydantic-settings) and `get_settings()`. |
 | `server/alfred_server/__main__.py` | `python -m alfred_server`: runs uvicorn with host/port/log level from `Settings`. |
+| `server/alfred_server/voice/stt.py` | Speech-to-text: `SpeechToText` protocol, `Transcript`, `FasterWhisperSTT`, shared `get_stt()`. The app's lifespan loads it when `ALFRED_STT_ENABLED=true`. Model choice and benchmarks in `docs/decisions/0002-stt.md`. |
+| `server/scripts/bench_stt.py` | STT benchmark (latency, real-time factor, VRAM) over the WAV fixtures. |
+| `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
 | `android/` | Android app `com.alfred.app` (Kotlin, Compose + Material 3, Koin, OkHttp, DataStore), Gradle KTS with a version catalog (`gradle/libs.versions.toml`). Unit tests in `app/src/test/`. See `android/README.md`. |
 | `infra/` | `docker-compose.yml` (services added from STU-48) and `.env.example`. |
 | `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
@@ -33,7 +36,12 @@ uv run ruff check                         # lint (add --fix to autofix)
 uv run ruff format                        # format (CI runs --check)
 uv run mypy alfred_server tests           # type check (lenient for now, pydantic plugin on)
 uv run python -m alfred_server            # run the server using ALFRED_* settings (default 127.0.0.1:8000)
+uv run pytest -m "not model"              # skip tests that download/load real speech models
+uv sync --extra cuda                      # + cuBLAS/cuDNN wheels for GPU STT (the 3090 box; not in CI)
+uv run python scripts/bench_stt.py --device cuda   # STT benchmark
 ```
+
+Tests marked `model` load a real model (`tiny.en` on CPU by default, downloaded once to the Hugging Face cache). Run them against the production model with `STT_TEST_MODEL=distil-large-v3 STT_TEST_DEVICE=cuda uv run pytest -m model`.
 
 `uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`.
 
@@ -66,7 +74,7 @@ Needs JDK 21 and the Android SDK (`ANDROID_HOME`, or `sdk.dir` in git-ignored `a
 ### Conventions
 
 - Python: ruff (line length 100, rules E/F/W/I/B/UP/SIM), type hints on public functions, pytest tests next to every feature.
-- Kotlin: official code style, Android lint must pass (CI), JVM unit tests (JUnit 4, coroutines-test, MockWebServer) for ViewModels and data classes. Design decisions in `docs/decisions/0002-android-client-stack.md`.
+- Kotlin: official code style, Android lint must pass (CI), JVM unit tests (JUnit 4, coroutines-test, MockWebServer) for ViewModels and data classes. Design decisions in `docs/decisions/0003-android-client-stack.md`.
 - `.editorconfig` sets formatting basics; LF line endings (`.gitattributes`).
 - Licence: private, all rights reserved (`LICENSE`).
 
@@ -125,7 +133,7 @@ Before finishing a ticket, update whichever of these your change affected. Never
 7. Update the shared-memory docs above if affected.
 8. Commit using conventional commits (`feat(router): …`, `fix(tts): …`) referencing the ticket key. Push and open a PR titled `STU-xx: <ticket title>` with: summary, how it was tested, acceptance criteria checklist (ticked or marked "needs Dan"), follow-ups.
 9. Mark the PR as ready for review: add the `ready-for-review` label. This is how `/review` agents find it.
-10. Turn on auto-fix for the PR (auto-fix is a per-PR setting, so this is done every time). In a cloud session, start watching the PR's CI checks and review comments and fix clear issues as they arrive. In a local session, tell Dan to run `/autofix-pr` on the branch.
+10. Turn on auto-fix for the PR, always and without asking (it's a per-PR, per-session setting, so this is done every time, including when resuming an existing PR). In the desktop app, bind the PR if needed (`ccd_pr` `get_status` / `bind_pr`) and call `ccd_pr` `set_monitor` with `auto_fix: true` and `address_comments: true`. In a cloud session, start watching the PR's CI checks and review comments and fix clear issues as they arrive. Only where neither works (plain CLI), tell Dan auto-fix is off and to run `/autofix-pr` on the branch.
 11. Comment on the Linear ticket with the PR link, what changed, and anything left over. Move it to **Code Review**.
 
 **Responding to review feedback** (usually via auto-fix): when a review leaves inline comments, the PR is labelled `changes-requested` and the ticket is back in **In Development**. Fix each clear comment, push, and reply on its thread saying what changed. When every comment is addressed, swap `changes-requested` for `ready-for-review` and move the ticket to **Code Review**. If a comment is ambiguous or architectural, ask Dan and leave the labels as they are.
@@ -137,6 +145,7 @@ Before finishing a ticket, update whichever of these your change affected. Never
 ### 4. Running tickets in parallel
 
 - Only work on tickets whose blockers are all **Done** or **QA**. Use `/next` to list them, or start several sessions with plain `/ticket`: each claims a different unassigned ticket. Several `/review` sessions can run at once too: each claims a different PR via the `in-review` label.
+- `/pm` is the project manager: it gives a project update (milestones, recent progress, what's outstanding, what needs Dan), then starts a fresh local `/ticket STU-xx` session for each free ticket, keeping at most **2** tickets In Development at once, and starts more as those finish. It never changes tickets or PRs itself. `/pm status` gives the update without starting anything.
 - Each parallel ticket gets its own git worktree and its own session, e.g. `git worktree add ../alfred-stu-49 -b <branch> main`. Never share a working directory between sessions.
 - Don't run two tickets at once that change the same core modules (router, connector registry, protocol, budget, shared `RequestContext`). If two Ready tickets overlap, do them one after the other.
 - Rebase on `main` before opening the PR; resolve conflicts in your own branch.

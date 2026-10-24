@@ -38,7 +38,7 @@ android {
     }
 }
 
-// JDK 21 for both Java and Kotlin compilation (ADR 0002); no separate compileOptions to drift.
+// JDK 21 for both Java and Kotlin compilation (ADR 0003); no separate compileOptions to drift.
 kotlin {
     jvmToolchain(21)
 }

@@ -4,3 +4,4 @@
 *.png binary
 *.onnx binary
 *.tflite binary
+*.wav binary

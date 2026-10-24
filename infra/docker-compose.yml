@@ -69,13 +69,15 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: ${POSTGRES_USER:-alfred}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
       PGDATABASE: ${POSTGRES_DB:-alfred}
+      # Same variable as the postgres service; psql reads it as PGPASSWORD (set below).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
       LITELLM_DB: ${LITELLM_DB:-litellm}
     command:
       - sh
       - -c
       - >-
+        export PGPASSWORD="$${POSTGRES_PASSWORD}";
         psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$${LITELLM_DB}'" | grep -q 1
         || psql -c "CREATE DATABASE \"$${LITELLM_DB}\""
     depends_on:

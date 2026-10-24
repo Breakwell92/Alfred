@@ -1,5 +1,5 @@
 # Alfred home-server stack. Run from infra/: `docker compose up -d` (see docs/infra.md).
-# Compose reads infra/.env (copy infra/.env.example). Later tickets add LiteLLM, STT, TTS
+# Compose reads infra/.env (copy infra/.env.example). Later tickets add STT, TTS
 # and the server itself.
 name: alfred
 
@@ -59,6 +59,83 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # One-shot: create LiteLLM's own database in the shared Postgres. Runs on every `up`
+  # (a no-op once the database exists), so it also works on an existing data volume,
+  # where /docker-entrypoint-initdb.d scripts would never run.
+  litellm-db-init:
+    image: pgvector/pgvector:pg18
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-alfred}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+      PGDATABASE: ${POSTGRES_DB:-alfred}
+      LITELLM_DB: ${LITELLM_DB:-litellm}
+    command:
+      - sh
+      - -c
+      - >-
+        psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$${LITELLM_DB}'" | grep -q 1
+        || psql -c "CREATE DATABASE \"$${LITELLM_DB}\""
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Model gateway: every LLM call (local and cloud) goes through here. See docs/infra.md.
+  litellm:
+    image: ghcr.io/berriai/litellm-database:${LITELLM_IMAGE_TAG:-v1.106.3}
+    restart: unless-stopped
+    # render_config.py fills ${VAR}s in config.yaml and drops cloud aliases without a key,
+    # then execs the proxy.
+    entrypoint:
+      - python
+      - /etc/litellm/render_config.py
+      - /etc/litellm/config.yaml
+      - /tmp/litellm-config.yaml
+      - --
+      - litellm
+      - --config
+      - /tmp/litellm-config.yaml
+      - --port
+      - "4000"
+    command: []
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in infra/.env}
+      # Encrypts provider credentials LiteLLM stores in its database. Never change it once set.
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set LITELLM_SALT_KEY in infra/.env}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-alfred}:${POSTGRES_PASSWORD}@postgres:5432/${LITELLM_DB:-litellm}
+      # Use the price table shipped with the pinned image: reproducible costs, no fetch at boot.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # Cloud keys: an empty key disables its alias (cloud-claude / cloud-gpt / cloud-gemini).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITELLM_LOCAL_ROUTER_MODEL: ${LITELLM_LOCAL_ROUTER_MODEL:-}
+      LITELLM_LOCAL_MAIN_MODEL: ${LITELLM_LOCAL_MAIN_MODEL:-}
+      LITELLM_CLOUD_CLAUDE_MODEL: ${LITELLM_CLOUD_CLAUDE_MODEL:-}
+      LITELLM_CLOUD_GPT_MODEL: ${LITELLM_CLOUD_GPT_MODEL:-}
+      LITELLM_CLOUD_GEMINI_MODEL: ${LITELLM_CLOUD_GEMINI_MODEL:-}
+    ports:
+      # Loopback by default; set LITELLM_BIND_ADDRESS to the Tailscale IP to reach it remotely.
+      - "${LITELLM_BIND_ADDRESS:-127.0.0.1}:${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./litellm:/etc/litellm:ro
+    depends_on:
+      litellm-db-init:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
 volumes:
   postgres-data:

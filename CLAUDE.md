@@ -21,9 +21,10 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/alfred_server/voice/stt.py` | Speech-to-text: `SpeechToText` protocol, `Transcript`, `FasterWhisperSTT`, shared `get_stt()`. The app's lifespan loads it when `ALFRED_STT_ENABLED=true`. Model choice and benchmarks in `docs/decisions/0002-stt.md`. |
 | `server/scripts/bench_stt.py` | STT benchmark (latency, real-time factor, VRAM) over the WAV fixtures. |
 | `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
+| `server/alfred_server/models/gateway.py` | `gateway_model(alias, metadata=CallMetadata(...))`: Agno `OpenAILike` model calling the LiteLLM proxy. The only way server code gets an LLM; aliases are `ModelAlias` (`local-router`, `local-main`, `cloud-claude`, `cloud-gpt`, `cloud-gemini`). See `docs/decisions/0005-model-gateway.md`. |
 | `server/alfred_server/db.py` | `check_database()`; `python -m alfred_server.db` checks `ALFRED_DATABASE_URL` is reachable. |
 | `android/` | Android app `com.alfred.app` (Kotlin, Compose + Material 3, Koin, OkHttp, DataStore), Gradle KTS with a version catalog (`gradle/libs.versions.toml`). Unit tests in `app/src/test/`. See `android/README.md`. |
-| `infra/` | `docker-compose.yml` (Postgres + pgvector, GPU Ollama), `.env.example`, `scripts/` (`pull-models.sh`, `check-models.sh`), `certs/` (git-ignored local CAs). See `docs/infra.md`. |
+| `infra/` | `docker-compose.yml` (Postgres + pgvector, GPU Ollama, LiteLLM gateway), `litellm/` (proxy config + `render_config.py`), `.env.example`, `scripts/` (`pull-models.sh`, `check-models.sh`), `certs/` (git-ignored local CAs). See `docs/infra.md`. |
 | `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
 | `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy (package and tests), pytest on every PR and push to `main`. Starts a pgvector Postgres service and sets `TEST_DATABASE_URL` so the `tests/test_db.py` smoke test runs. |
 | `.github/workflows/android.yml` | CI for `android/`: `./gradlew lint testDebugUnitTest assembleDebug` on every PR and push to `main`; uploads the debug APK as an artifact. |
@@ -50,7 +51,7 @@ Tests marked `model` load a real model (`tiny.en` on CPU by default, downloaded 
 ### Infra commands (see `docs/infra.md`)
 
 ```bash
-cd infra && docker compose up -d          # Postgres + Ollama (needs infra/.env)
+cd infra && docker compose up -d          # Postgres + Ollama + LiteLLM (needs infra/.env)
 infra/scripts/pull-models.sh              # pull OLLAMA_MODELS_ROUTER/MAIN (from repo root)
 infra/scripts/check-models.sh             # prompt each model, show VRAM use
 ```
@@ -81,6 +82,7 @@ Needs JDK 21 and the Android SDK (`ANDROID_HOME`, or `sdk.dir` in git-ignored `a
 - `get_settings()` is `lru_cache`d. In tests, build `Settings(_env_file=None)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test.
 - `ALFRED_HOST` defaults to `127.0.0.1`. Listening on all interfaces (`0.0.0.0`) must be set explicitly (e.g. in compose).
 - Document every new variable in `infra/.env.example`, with no real values. The same file is copied to `infra/.env` (compose) and `server/.env` (server).
+- LLM calls go only through the LiteLLM gateway: `alfred_server.models.gateway.gateway_model("<alias>")`. Never import a provider SDK or name a provider model in server code; cloud API keys live only in `infra/.env` (read by LiteLLM).
 - Secrets in `Settings` are `SecretStr` (e.g. `database_url`); read them with `.get_secret_value()` only where they're used.
 - `ALFRED_API_TOKEN` (`SecretStr`) is the shared bearer token the Android app sends. Every route except `/health` must require it: add routes to the `protected` router in `main.py` (or `Depends(require_api_token)`). Unset → protected routes answer 503 (fail closed). FastAPI's `/docs`, `/redoc` and `/openapi.json` are disabled.
 

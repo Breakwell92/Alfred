@@ -9,13 +9,13 @@ Alfred is a personal, wake-word-activated Android voice assistant. Personal use 
   - speech-to-text (`alfred_server/voice/stt.py`, faster-whisper on CUDA; ADR 0002) and text-to-speech (`alfred_server/voice/tts.py`, Kokoro on CUDA with Piper on CPU as fallback, streamed sentence by sentence as 24 kHz PCM16; ADR 0006)
   - local LLMs, served through LiteLLM alongside cloud models
   - an Agno agent layer (router plus specialist agents): agents built per request by a shared factory (`alfred_server/agents/`) with a `RequestContext`, conversation history in Postgres, reachable as text at `POST /chat` and `POST /chat/stream` (ADR 0007). The router classifies each request on `local-router`, picks a model (local first, cloud only when enabled, under budget and needed) and hands it to a registered specialist, retrying once on cloud if the local model fails (ADR 0009)
-  - connectors: Google, Home Assistant, Spotify, Plex, Slack, GitHub, Samsung TVs
+  - connectors: Google, Home Assistant, Spotify, Plex, Slack, GitHub, Samsung TVs. Each is registered in `alfred_server/connectors/` with per-tool risk and privacy metadata; its credentials and OAuth tokens are encrypted in Postgres (the phone never holds them), and specialists load only their enabled, connected connectors' tools (`docs/connectors.md`, ADR 0010)
   - a scheduler for timed and event-triggered tasks
 - **Cloud LLMs** (Claude, GPT, Gemini) are used only when enabled, under budget, and needed. The budget service (`alfred_server/budget/`, ADR 0008) answers "may this call use cloud alias X?" from Dan's monthly cap and LiteLLM's spend logs; cloud is off until enabled with `PUT /settings/budget`.
 
 The client and server talk over a WebSocket (see `docs/protocol.md` once it exists), reached over Tailscale (no exposed ports).
 
-**Auth:** the app sends a shared bearer token (`ALFRED_API_TOKEN`) on every request; the server requires it on every route except `GET /health`, and refuses everything (503) when no token is configured. The app shows connection status by polling `/health` and the authenticated `/me`. See `docs/decisions/0004-android-client-stack.md`.
+**Auth:** the app sends a shared bearer token (`ALFRED_API_TOKEN`) on every request; the server requires it on every route except `GET /health` and the OAuth callback `GET /connectors/{id}/auth/callback` (guarded by a one-time state instead, ADR 0010), and refuses everything (503) when no token is configured. The app shows connection status by polling `/health` and the authenticated `/me`. See `docs/decisions/0004-android-client-stack.md`.
 
 ## Repository layout
 

@@ -55,6 +55,18 @@ class Settings(BaseSettings):
     # `agno` schema). Off by default so tests never touch a database.
     agent_tracing: bool = False
 
+    # Connectors (alfred_server.connectors, docs/connectors.md).
+    # Fernet key encrypting connector credentials and OAuth tokens in Postgres. Unset means no
+    # connector that needs a secret can be set up or used (fail closed). Never change it once
+    # set: stored secrets become unreadable. Generate one with
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    vault_key: SecretStr | None = None
+    # Base URL the browser reaches this server at, for OAuth redirect URIs
+    # (`<public_url>/connectors/<id>/auth/callback`). Unset uses the request's own URL.
+    public_url: str | None = None
+    # How often the background task renews OAuth tokens that expire within 5 minutes.
+    connector_refresh_interval_s: float = Field(default=60.0, gt=0)
+
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.
     stt_enabled: bool = False

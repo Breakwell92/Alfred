@@ -7,8 +7,9 @@ documented commands. Document new variables in `infra/.env.example`.
 
 from functools import lru_cache
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -83,6 +84,15 @@ class Settings(BaseSettings):
     # rather than run Kokoro on the CPU.
     tts_kokoro_device: Literal["auto", "cuda", "cpu"] = "auto"
     tts_piper_voice: str = "en_GB-alan-medium"
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA timezone {value!r}") from exc
+        return value
 
 
 @lru_cache

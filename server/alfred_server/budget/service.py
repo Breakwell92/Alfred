@@ -6,6 +6,7 @@ local when the answer is no. Rules and why: docs/decisions/0008-budget-service.m
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -39,11 +40,17 @@ from alfred_server.budget.store import BudgetStore
 from alfred_server.config import Settings, get_settings
 from alfred_server.models.gateway import LOCAL_ALIASES, ModelAlias
 
+logger = logging.getLogger(__name__)
+
 # Month-to-date spend is re-read at most this often. LiteLLM writes spend logs about a
 # minute late anyway.
 SPEND_CACHE_TTL_S = 60.0
 
 PROVIDER_NAMES: dict[Provider, str] = {"claude": "Claude", "gpt": "GPT", "gemini": "Gemini"}
+
+
+class SettingsUnavailableError(RuntimeError):
+    """The budget settings couldn't be read from the database."""
 
 
 class PriceSource(Protocol):
@@ -125,8 +132,15 @@ class BudgetService:
 
     # --- Spend and cost -----------------------------------------------------------------------
 
+    def load_settings(self) -> BudgetSettings:
+        """The stored settings. Raises `SettingsUnavailableError` if they can't be read."""
+        try:
+            return self.store.load()
+        except Exception as exc:
+            raise SettingsUnavailableError(f"can't read budget settings: {exc}") from exc
+
     def get_settings(self) -> BudgetSettings:
-        return self.store.load()
+        return self.load_settings()
 
     def save_settings(self, settings: BudgetSettings) -> BudgetSettings:
         self.store.save(settings)
@@ -217,7 +231,11 @@ class BudgetService:
 
         if tier == "exhausted":
             month, _, end = self._month_bounds(self.clock())
-            announce = self.store.mark_over_budget_announced(month)
+            try:
+                announce = self.store.mark_over_budget_announced(month)
+            except Exception:  # missing an announcement beats failing the request
+                logger.exception("couldn't record the over-budget announcement for %s", month)
+                announce = False
             until = f"{end.day} {end.strftime('%B')}"
             return decision(
                 False,
@@ -263,9 +281,14 @@ class BudgetService:
     def preferred_aliases(self, task_type: str) -> list[ModelAlias]:
         """Enabled cloud aliases for `task_type`, most preferred first. Empty if cloud is off.
 
-        Doesn't check the budget: call `decide` for the one you pick.
+        Doesn't check the budget: call `decide` for the one you pick. Empty, too, if the
+        settings can't be read (fail closed).
         """
-        settings = self.store.load()
+        try:
+            settings = self.store.load()
+        except Exception:
+            logger.exception("can't read budget settings")
+            return []
         if not settings.cloud_enabled:
             return []
         prefs = settings.provider_preferences
@@ -285,8 +308,11 @@ class BudgetService:
     # --- Reporting ----------------------------------------------------------------------------
 
     def summary(self) -> SpendSummary:
-        """Spend today and this month, by provider and tag. Raises `SpendUnavailableError`."""
-        settings = self.store.load()
+        """Spend today and this month, by provider and tag.
+
+        Raises `SpendUnavailableError` (spend logs) or `SettingsUnavailableError` (settings).
+        """
+        settings = self.load_settings()
         now = self.clock()
         month, start, end = self._month_bounds(now)
         day_start, day_end = self._day_bounds(now)

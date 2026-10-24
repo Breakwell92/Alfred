@@ -1,5 +1,6 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -80,6 +81,49 @@ def test_put_rejects_invalid_settings(client: TestClient, bad: dict[str, object]
 
     assert response.status_code == 422
     assert client.get("/settings/budget", headers=AUTH).json()["monthly_cap_gbp"] == 20
+
+
+@pytest.mark.parametrize(
+    ("drop", "missing"),
+    [
+        (lambda b: b.pop("cloud_enabled"), "cloud_enabled"),
+        (lambda b: b["thresholds"].pop("exhausted"), "thresholds.exhausted"),
+        (lambda b: b["providers"].pop("gemini"), "providers.gemini"),
+    ],
+)
+def test_put_rejects_partial_body(
+    client: TestClient, drop: Callable[[dict[str, Any]], object], missing: str
+) -> None:
+    body = client.get("/settings/budget", headers=AUTH).json()
+    body.update(cloud_enabled=True, monthly_cap_gbp=30)
+    drop(body)
+
+    response = client.put("/settings/budget", json=body, headers=AUTH)
+
+    assert response.status_code == 422
+    assert missing in response.json()["detail"]
+    assert client.get("/settings/budget", headers=AUTH).json()["monthly_cap_gbp"] == 20
+
+
+def test_put_cap_only_does_not_reset_other_settings(client: TestClient) -> None:
+    full = client.get("/settings/budget", headers=AUTH).json()
+    full["cloud_enabled"] = True
+    assert client.put("/settings/budget", json=full, headers=AUTH).status_code == 200
+
+    response = client.put("/settings/budget", json={"monthly_cap_gbp": 30}, headers=AUTH)
+
+    assert response.status_code == 422
+    assert client.get("/settings/budget", headers=AUTH).json()["cloud_enabled"] is True
+
+
+def test_settings_db_down_is_503(client: TestClient, service: BudgetService) -> None:
+    def down() -> None:
+        raise RuntimeError("db down")
+
+    service.store.load = down  # type: ignore[method-assign,assignment]
+
+    assert client.get("/settings/budget", headers=AUTH).status_code == 503
+    assert client.get("/spend/summary", headers=AUTH).status_code == 503
 
 
 def test_spend_summary(client: TestClient) -> None:

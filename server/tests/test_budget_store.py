@@ -1,11 +1,13 @@
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, insert
 
 from alfred_server.budget.models import BudgetSettings, Thresholds
-from alfred_server.budget.store import BudgetStore
+from alfred_server.budget.store import BudgetStore, budget_months
 from tests.budget_helpers import file_engine, memory_engine, postgres_engines  # noqa: F401
 
 CUSTOM = BudgetSettings(
@@ -70,3 +72,42 @@ def test_over_budget_announced_once_postgres(
     postgres_engines: Callable[[], Engine],  # noqa: F811
 ) -> None:
     announced_once(postgres_engines())
+
+
+def announced_when_row_exists_unflagged(engine: Engine) -> None:
+    store = BudgetStore(engine)
+    store._ensure_tables()
+    with engine.begin() as conn:
+        conn.execute(insert(budget_months).values(month="2026-10", over_budget_announced_at=None))
+
+    assert store.mark_over_budget_announced("2026-10") is True
+    assert store.mark_over_budget_announced("2026-10") is False
+
+
+def test_announced_when_row_exists_unflagged_sqlite(tmp_path: Path) -> None:
+    announced_when_row_exists_unflagged(file_engine(tmp_path / "alfred.db"))
+
+
+def test_announced_when_row_exists_unflagged_postgres(
+    postgres_engines: Callable[[], Engine],  # noqa: F811
+) -> None:
+    announced_when_row_exists_unflagged(postgres_engines())
+
+
+def test_concurrent_first_checks_announce_once_postgres(
+    postgres_engines: Callable[[], Engine],  # noqa: F811
+) -> None:
+    engine = postgres_engines()
+    BudgetStore(engine)._ensure_tables()
+    barrier = threading.Barrier(8)
+
+    def mark() -> bool:
+        store = BudgetStore(engine)
+        store._created = True
+        barrier.wait()
+        return store.mark_over_budget_announced("2026-10")
+
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(lambda _: mark(), range(8)))
+
+    assert results.count(True) == 1

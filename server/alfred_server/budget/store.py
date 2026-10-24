@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -18,6 +19,8 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from alfred_server.budget.models import BudgetSettings
 
@@ -84,20 +87,24 @@ class BudgetStore:
         """
         self._ensure_tables()
         at = at or datetime.now(UTC)
+        dialect = self.engine.dialect.name
+        if dialect == "postgresql":
+            ensure_row: Any = pg_insert(budget_months)
+        elif dialect == "sqlite":
+            ensure_row = sqlite_insert(budget_months)
+        else:
+            raise NotImplementedError(f"unsupported database {dialect!r}")
+        ensure_row = ensure_row.values(month=month).on_conflict_do_nothing(index_elements=["month"])
+        # Atomic: concurrent first checks can't both insert, and only the one whose UPDATE
+        # sets the flag announces (Postgres re-checks the WHERE after a concurrent commit).
         with self.engine.begin() as conn:
-            row = conn.execute(
-                select(budget_months.c.over_budget_announced_at)
-                .where(budget_months.c.month == month)
-                .with_for_update()
-            ).first()
-            if row is None:
-                conn.execute(insert(budget_months).values(month=month, over_budget_announced_at=at))
-                return True
-            if row.over_budget_announced_at is None:
-                conn.execute(
-                    update(budget_months)
-                    .where(budget_months.c.month == month)
-                    .values(over_budget_announced_at=at)
+            conn.execute(ensure_row)
+            claimed = conn.execute(
+                update(budget_months)
+                .where(
+                    budget_months.c.month == month,
+                    budget_months.c.over_budget_announced_at.is_(None),
                 )
-                return True
-            return False
+                .values(over_budget_announced_at=at)
+            ).rowcount
+        return claimed == 1

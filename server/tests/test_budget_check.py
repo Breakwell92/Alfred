@@ -287,3 +287,35 @@ def test_preferred_aliases_cheapest_orders_by_price() -> None:
 
 def test_preferred_aliases_empty_when_cloud_off() -> None:
     assert make_service().preferred_aliases("default") == []
+
+
+def failing(*_args: object, **_kwargs: object) -> object:
+    raise RuntimeError("db down")
+
+
+def test_announce_failure_still_denies_without_crashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _ = service_with(25.0)
+    monkeypatch.setattr(service.store, "mark_over_budget_announced", failing)
+
+    decision = service.decide("cloud-claude", 1000, 100, "user_request")
+
+    assert not decision.allowed
+    assert decision.code == "exhausted"
+    assert decision.announce is False
+
+
+def test_preferred_aliases_empty_when_settings_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _ = service_with(0.0)
+    monkeypatch.setattr(service.store, "load", failing)
+
+    assert service.preferred_aliases("default") == []
+
+
+def test_summary_raises_settings_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from alfred_server.budget.service import SettingsUnavailableError
+
+    service, _ = service_with(0.0)
+    monkeypatch.setattr(service.store, "load", failing)
+
+    with pytest.raises(SettingsUnavailableError):
+        service.summary()

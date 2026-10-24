@@ -126,3 +126,37 @@ def test_unreachable_proxy_is_unavailable() -> None:
 def test_no_key_is_unavailable() -> None:
     with pytest.raises(PriceUnavailableError):
         prices(Proxy(), key=None).price("cloud-claude")
+
+
+def test_failure_backs_off_without_new_requests() -> None:
+    proxy, clock = Proxy(status=500, body={}), Clock()
+    source = prices(proxy, clock)
+
+    with pytest.raises(PriceUnavailableError):
+        source.price("cloud-claude")
+    clock.t += 29
+    with pytest.raises(PriceUnavailableError):
+        source.price("cloud-claude")
+    assert len(proxy.requests) == 1
+
+    clock.t += 1
+    proxy.status, proxy.body = 200, MODEL_INFO
+    assert source.price("cloud-claude") == Price(2e-6, 1e-5)
+    assert len(proxy.requests) == 2
+
+
+def test_last_good_prices_used_while_refresh_fails() -> None:
+    proxy, clock = Proxy(), Clock()
+    source = prices(proxy, clock)
+    source.price("cloud-claude")
+
+    proxy.status = 503
+    clock.t += 3600  # TTL over, refresh fails
+    assert source.price("cloud-claude") == Price(2e-6, 1e-5)
+    clock.t += 10  # within the backoff: no new request
+    assert source.price("cloud-claude") == Price(2e-6, 1e-5)
+    assert len(proxy.requests) == 2
+
+    clock.t += 24 * 3600  # past the stale grace period
+    with pytest.raises(PriceUnavailableError):
+        source.price("cloud-claude")

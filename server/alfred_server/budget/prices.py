@@ -16,6 +16,11 @@ import httpx
 from alfred_server.models.gateway import LOCAL_ALIASES, ModelAlias
 
 PRICE_TTL_S = 3600.0
+# After a failed fetch, don't ask the proxy again for this long: callers get an answer at once
+# instead of each waiting on a timeout.
+FAILURE_BACKOFF_S = 30.0
+# Keep using the last good prices for this long past the TTL while refreshes fail.
+STALE_GRACE_S = 24 * 3600.0
 
 
 class PriceUnavailableError(RuntimeError):
@@ -44,15 +49,21 @@ class GatewayPrices:
         *,
         http_client: httpx.Client | None = None,
         ttl_s: float = PRICE_TTL_S,
+        backoff_s: float = FAILURE_BACKOFF_S,
+        stale_grace_s: float = STALE_GRACE_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.url = base_url.rstrip("/") + "/model/info"
         self.api_key = api_key
         self.http = http_client or httpx.Client(timeout=5.0)
         self.ttl_s = ttl_s
+        self.backoff_s = backoff_s
+        self.stale_grace_s = stale_grace_s
         self.clock = clock
         self._prices: dict[str, Price] | None = None
         self._fetched_at = 0.0
+        self._retry_at = 0.0
+        self._last_error: PriceUnavailableError | None = None
         self._lock = threading.Lock()
 
     def _fetch(self) -> dict[str, Price]:
@@ -88,9 +99,22 @@ class GatewayPrices:
         if alias in LOCAL_ALIASES:
             return FREE
         with self._lock:
-            if self._prices is None or self.clock() - self._fetched_at >= self.ttl_s:
-                self._prices = self._fetch()
-                self._fetched_at = self.clock()
+            now = self.clock()
+            fresh = self._prices is not None and now - self._fetched_at < self.ttl_s
+            if not fresh and now >= self._retry_at:
+                try:
+                    self._prices = self._fetch()
+                    self._fetched_at = now
+                    self._last_error = None
+                except PriceUnavailableError as exc:
+                    self._retry_at = now + self.backoff_s
+                    self._last_error = exc
+            usable = (
+                self._prices is not None
+                and now - self._fetched_at < self.ttl_s + self.stale_grace_s
+            )
+            if not usable or self._prices is None:
+                raise PriceUnavailableError(str(self._last_error or "no prices from LiteLLM"))
             prices = self._prices
         if alias not in prices:
             raise PriceUnavailableError(f"no price for {alias!r}: not configured on the gateway")

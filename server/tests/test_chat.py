@@ -12,11 +12,23 @@ from fastapi.testclient import TestClient
 
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.echo import build_echo_agent
-from alfred_server.chat import agent_db_dependency, chat_model_dependency
+from alfred_server.chat import (
+    agent_db_dependency,
+    budget_dependency,
+    model_factory_dependency,
+)
 from alfred_server.config import Settings
 from alfred_server.main import create_app
-from alfred_server.models.gateway import gateway_model
-from tests.llm_fakes import FakeProxy, completion, streamed_completion, tool_call_completion
+from alfred_server.models.gateway import CallMetadata, ModelAlias, gateway_model
+from tests.llm_fakes import (
+    FakeProxy,
+    completion,
+    reply,
+    route_completion,
+    streamed_completion,
+    tool_call_completion,
+)
+from tests.router_fakes import FakeBudget, deny
 
 TOKEN = "test-token-not-a-secret"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -54,19 +66,32 @@ def unreachable_db(tmp_path: Path) -> RecordingDb:
 
 
 class ChatHarness:
-    """The app with a mocked LiteLLM proxy and async SQLite Agno storage."""
+    """The app with a mocked LiteLLM proxy, async SQLite Agno storage and a fake budget.
+
+    Every request makes two or more proxy calls: the router's classifier first (queue a
+    `route_completion()`), then the specialist.
+    """
 
     def __init__(self, db: RecordingDb) -> None:
         self.proxy = FakeProxy()
         self.db = db
+        self.budget = FakeBudget()  # cloud off
         self.app = create_app()
         self.app.dependency_overrides[agent_db_dependency] = lambda: self.db
-        self.app.dependency_overrides[chat_model_dependency] = self._model
+        self.app.dependency_overrides[model_factory_dependency] = lambda: self._model
+        # A lambda so tests can swap `self.budget` after the harness is built.
+        self.app.dependency_overrides[budget_dependency] = lambda: self.budget
         self.client = TestClient(self.app)
 
-    def _model(self) -> Model:
+    def _model(self, alias: ModelAlias, metadata: CallMetadata, **kwargs: Any) -> Model:
         settings = Settings(_env_file=None, litellm_api_key="sk-test")
-        return gateway_model("local-main", settings=settings, http_client=self.proxy.async_client())
+        return gateway_model(
+            alias,
+            metadata=metadata,
+            settings=settings,
+            http_client=self.proxy.async_client(),
+            **kwargs,
+        )
 
     def reply_with(self, *responses: Any) -> None:
         self.proxy.responses.extend(responses)
@@ -101,15 +126,17 @@ def message_texts(body: dict[str, Any]) -> list[str]:
 
 def test_what_time_is_it_uses_the_get_time_tool(harness: ChatHarness) -> None:
     harness.reply_with(
+        route_completion(level="standard", tools=1),
         tool_call_completion("get_time", {}),
-        completion({"role": "assistant", "content": "It's five past two."}),
+        reply("It's five past two."),
     )
 
     response = harness.post("/chat", text="What time is it?", session_id="s1")
 
     assert response.status_code == 200
     assert response.json() == {"reply": "It's five past two.", "session_id": "s1"}
-    first, second = harness.proxy.body(0), harness.proxy.body(1)
+    classify, first, second = (harness.proxy.body(i) for i in range(3))
+    assert classify["model"] == "local-router"
     assert first["model"] == "local-main"
     assert [t["function"]["name"] for t in first["tools"]] == ["get_time"]
     tool_result = second["messages"][-1]
@@ -117,12 +144,21 @@ def test_what_time_is_it_uses_the_get_time_tool(harness: ChatHarness) -> None:
     assert re.search(r"\d\d:\d\d on \w+day \d+ \w+ \d{4} \(Europe/London\)", tool_result["content"])
 
 
+def test_simple_request_runs_on_the_router_model(harness: ChatHarness) -> None:
+    harness.reply_with(route_completion(level="simple", tools=0), reply("Hello."))
+
+    harness.post("/chat", text="Hi", session_id="s1")
+
+    assert harness.proxy.body(1)["model"] == "local-router"
+    assert "tools" in harness.proxy.body(1)  # the specialist, not the classifier again
+
+
 def test_request_context_is_in_the_system_message(harness: ChatHarness) -> None:
-    harness.reply_with(completion({"role": "assistant", "content": "Hello."}))
+    harness.reply_with(route_completion(), reply("Hello."))
 
     harness.post("/chat", text="Hi", session_id="s1", device_id="pixel-9", device_type="phone")
 
-    system = harness.proxy.body()["messages"][0]
+    system = harness.proxy.body(1)["messages"][0]
     assert system["role"] == "system"
     assert "<request_context>" in system["content"]
     assert "device_type: phone" in system["content"]
@@ -133,9 +169,12 @@ def test_request_context_is_in_the_system_message(harness: ChatHarness) -> None:
 
 def test_follow_up_in_same_session_sees_earlier_turns(harness: ChatHarness) -> None:
     harness.reply_with(
-        completion({"role": "assistant", "content": "Nice to meet you, Dan."}),
-        completion({"role": "assistant", "content": "Your name is Dan."}),
-        completion({"role": "assistant", "content": "I don't know."}),
+        route_completion(),
+        reply("Nice to meet you, Dan."),
+        route_completion(),
+        reply("Your name is Dan."),
+        route_completion(),
+        reply("I don't know."),
     )
 
     harness.post("/chat", text="My name is Dan.", session_id="s1")
@@ -143,15 +182,15 @@ def test_follow_up_in_same_session_sees_earlier_turns(harness: ChatHarness) -> N
     harness.post("/chat", text="What's my name?", session_id="s2")
 
     assert second.json()["reply"] == "Your name is Dan."
-    same_session = message_texts(harness.proxy.body(1))
+    same_session = message_texts(harness.proxy.body(3))
     assert "My name is Dan." in same_session
     assert "Nice to meet you, Dan." in same_session
-    other_session = message_texts(harness.proxy.body(2))
+    other_session = message_texts(harness.proxy.body(5))
     assert "My name is Dan." not in other_session
 
 
 def test_new_session_id_when_none_given(harness: ChatHarness) -> None:
-    harness.reply_with(completion({"role": "assistant", "content": "Hello."}))
+    harness.reply_with(route_completion(), reply("Hello."))
 
     response = harness.post("/chat", text="Hi")
 
@@ -160,7 +199,7 @@ def test_new_session_id_when_none_given(harness: ChatHarness) -> None:
 
 
 def test_stream_yields_tokens_then_done(harness: ChatHarness) -> None:
-    harness.reply_with(streamed_completion("It's ", "five ", "past ", "two."))
+    harness.reply_with(route_completion(), streamed_completion("It's ", "five ", "past ", "two."))
 
     response = harness.post("/chat/stream", text="What time is it?", session_id="s1")
 
@@ -170,23 +209,34 @@ def test_stream_yields_tokens_then_done(harness: ChatHarness) -> None:
     tokens = [data["text"] for name, data in events if name == "token"]
     assert tokens == ["It's ", "five ", "past ", "two."]
     assert events[-1] == ("done", {"reply": "It's five past two.", "session_id": "s1"})
-    assert harness.proxy.body()["stream"] is True
+    assert harness.proxy.body(1)["stream"] is True
 
 
 def test_stream_turn_is_stored_for_the_next_request(harness: ChatHarness) -> None:
     harness.reply_with(
+        route_completion(),
         streamed_completion("Hello ", "Dan."),
-        completion({"role": "assistant", "content": "You said hello."}),
+        route_completion(),
+        reply("You said hello."),
     )
 
     harness.post("/chat/stream", text="I'm Dan.", session_id="s1")
     harness.post("/chat", text="What did I say?", session_id="s1")
 
-    assert "I'm Dan." in message_texts(harness.proxy.body(1))
+    assert "I'm Dan." in message_texts(harness.proxy.body(3))
+
+
+def test_classifier_failure_falls_back_to_the_default_route(harness: ChatHarness) -> None:
+    harness.reply_with(reply("not json at all"), reply("Hello."))
+
+    response = harness.post("/chat", text="Hi", session_id="s1")
+
+    assert response.json()["reply"] == "Hello."
+    assert harness.proxy.body(1)["model"] == "local-main"
 
 
 def test_stream_reports_model_failure(harness: ChatHarness) -> None:
-    # No responses queued, so the proxy call fails.
+    # No responses queued, so every proxy call fails (the classifier's falls back quietly).
     response = harness.post("/chat/stream", text="Hi", session_id="s1")
 
     assert sse_events(response.text)[-1] == (
@@ -210,12 +260,36 @@ def test_requires_token(harness: ChatHarness, path: str) -> None:
 
 @pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
 def test_503_without_gateway_key(harness: ChatHarness, path: str) -> None:
-    del harness.app.dependency_overrides[chat_model_dependency]
+    del harness.app.dependency_overrides[model_factory_dependency]
 
     response = harness.post(path, text="Hi")
 
     assert response.status_code == 503
     assert "ALFRED_LITELLM_API_KEY" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
+def test_over_budget_announcement_comes_first(harness: ChatHarness, path: str) -> None:
+    message = (
+        "I've used this month's £20.00 cloud budget, so I'll use local models until 1 November."
+    )
+    harness.budget = FakeBudget(
+        ["cloud-claude"], {"cloud-claude": deny("exhausted", message, announce=True)}
+    )
+    harness.reply_with(route_completion(level="complex"), reply("Here's a plan."))
+    if path == "/chat/stream":
+        harness.proxy.responses[-1] = streamed_completion("Here's ", "a plan.")
+
+    response = harness.post(path, text="Plan my week", session_id="s1")
+
+    expected = f"{message} Here's a plan."
+    if path == "/chat":
+        assert response.json()["reply"] == expected
+    else:
+        events = sse_events(response.text)
+        assert events[0] == ("token", {"text": message + " "})
+        assert events[-1] == ("done", {"reply": expected, "session_id": "s1"})
+    assert harness.proxy.body(1)["model"] == "local-main"
 
 
 @pytest.mark.parametrize(

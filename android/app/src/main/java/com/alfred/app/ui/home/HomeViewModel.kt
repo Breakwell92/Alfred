@@ -12,10 +12,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -36,7 +36,12 @@ class HomeViewModel(
     val status: StateFlow<ConnectionStatus> = settingsRepository.settings
         .distinctUntilChanged()
         .flatMapLatest(::poll)
-        .catch { e -> emit(ConnectionStatus.Unreachable("Couldn't read settings: ${e.describe()}")) }
+        // Settings can't be read: show it, then try again on "Check now" or the next poll.
+        .retryWhen { e, _ ->
+            emit(ConnectionStatus.Unreachable("Couldn't read settings: ${e.describe()}"))
+            withTimeoutOrNull(pollIntervalMillis) { refreshRequests.receive() }
+            true
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),

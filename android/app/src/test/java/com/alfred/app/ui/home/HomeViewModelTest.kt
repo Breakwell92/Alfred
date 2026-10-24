@@ -101,15 +101,42 @@ class HomeViewModelTest {
         }
 
     @Test
-    fun `unreadable settings become an error status`() = runTest(mainDispatcher.dispatcher) {
-        val broken = object : SettingsRepository {
-            override val settings: Flow<AppSettings> = flow { throw IOException("corrupt") }
+    fun `unreadable settings become an error status and recover`() = runTest(mainDispatcher.dispatcher) {
+        var readable = false
+        val flaky = object : SettingsRepository {
+            override val settings: Flow<AppSettings> = flow {
+                if (!readable) throw IOException("corrupt")
+                emit(initial)
+            }
 
             override suspend fun save(settings: AppSettings) = Unit
         }
-        val vm = HomeViewModel(broken, server)
+        val vm = HomeViewModel(flaky, server, pollIntervalMillis = 10_000)
+        backgroundScope.launch { vm.status.collect {} }
+        assertEquals(ConnectionStatus.Unreachable("Couldn't read settings: corrupt"), vm.status.value)
+
+        readable = true
+        vm.refresh()
+        runCurrent()
+        assertEquals(ConnectionStatus.Connected, vm.status.value)
+    }
+
+    @Test
+    fun `unreadable settings are retried on the poll interval`() = runTest(mainDispatcher.dispatcher) {
+        var readable = false
+        val flaky = object : SettingsRepository {
+            override val settings: Flow<AppSettings> = flow {
+                if (!readable) throw IOException("corrupt")
+                emit(initial)
+            }
+
+            override suspend fun save(settings: AppSettings) = Unit
+        }
+        val vm = HomeViewModel(flaky, server, pollIntervalMillis = 10_000)
         backgroundScope.launch { vm.status.collect {} }
 
-        assertEquals(ConnectionStatus.Unreachable("Couldn't read settings: corrupt"), vm.status.value)
+        readable = true
+        advanceTimeBy(10_001)
+        assertEquals(ConnectionStatus.Connected, vm.status.value)
     }
 }

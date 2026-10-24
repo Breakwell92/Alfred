@@ -7,8 +7,9 @@ documented commands. Document new variables in `infra/.env.example`.
 
 from functools import lru_cache
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +39,13 @@ class Settings(BaseSettings):
     # alfred_server.models.gateway. The key is LITELLM_MASTER_KEY or a virtual key made with it.
     litellm_base_url: str = "http://127.0.0.1:4000"
     litellm_api_key: SecretStr | None = None
+
+    # Agno agent layer (docs/decisions/0007-agent-runtime.md).
+    # The user's IANA timezone: agents' request context and the get_time tool use it.
+    timezone: str = "Europe/London"
+    # OpenTelemetry traces of agent runs, model calls and tool calls, stored in Postgres (the
+    # `agno` schema). Off by default so tests never touch a database.
+    agent_tracing: bool = False
 
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.
@@ -74,6 +82,16 @@ class Settings(BaseSettings):
     # rather than run Kokoro on the CPU.
     tts_kokoro_device: Literal["auto", "cuda", "cpu"] = "auto"
     tts_piper_voice: str = "en_GB-alan-medium"
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        # Fail at startup, not on the first chat request.
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown timezone {value!r}") from exc
+        return value
 
 
 @lru_cache

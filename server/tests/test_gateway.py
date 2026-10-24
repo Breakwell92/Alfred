@@ -1,7 +1,6 @@
 import json
 from typing import Any
 
-import httpx
 import pytest
 from agno.agent import Agent
 
@@ -12,6 +11,7 @@ from alfred_server.models.gateway import (
     GatewayNotConfiguredError,
     gateway_model,
 )
+from tests.llm_fakes import FakeProxy, completion
 
 BASE_URL = "http://litellm.test:4000"
 KEY = "sk-test-key"
@@ -21,35 +21,6 @@ def settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {"litellm_base_url": BASE_URL, "litellm_api_key": KEY}
     values.update(overrides)
     return Settings(_env_file=None, **values)
-
-
-def completion(message: dict[str, Any], finish_reason: str = "stop") -> dict[str, Any]:
-    return {
-        "id": "chatcmpl-test",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "local-main",
-        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    }
-
-
-class FakeProxy:
-    """Mock LiteLLM proxy: records requests and replays canned chat completions."""
-
-    def __init__(self, *responses: dict[str, Any]) -> None:
-        self.responses = list(responses)
-        self.requests: list[httpx.Request] = []
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        return httpx.Response(200, json=self.responses.pop(0))
-
-    def client(self) -> httpx.Client:
-        return httpx.Client(transport=httpx.MockTransport(self))
-
-    def body(self, i: int = 0) -> dict[str, Any]:
-        return json.loads(self.requests[i].content)
 
 
 def test_calls_proxy_with_alias_key_and_metadata() -> None:

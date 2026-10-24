@@ -35,3 +35,7 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Local CA certs for intercepted HTTPS (infra/certs/README.md)
+infra/certs/*
+!infra/certs/README.md

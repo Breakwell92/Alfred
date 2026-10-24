@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "Proprietary" }
 dependencies = [
-    "agno>=3.1,<4",
+    "agno==3.1.10",
     "fastapi>=0.115",
     "faster-whisper>=1.2",
     "httpx>=0.27",
@@ -16,11 +16,14 @@ dependencies = [
     # the CPU-only `onnxruntime` package (see [tool.uv] below).
     "onnxruntime-gpu>=1.22",
     "openai>=3.30",
+    "openinference-instrumentation-agno>=1.0.15",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
     "piper-tts>=1.3",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",
     "soxr>=0.5",
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     # IANA timezones for zoneinfo on Windows, which has no system tz database.
     "tzdata>=2024.1",
     "uvicorn[standard]>=0.32",
@@ -47,6 +50,7 @@ required-environments = [
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",
@@ -64,6 +68,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "model: loads a real speech model (downloads it on first run); deselect with -m 'not model'",
+    "integration: calls the real LiteLLM gateway (needs LITELLM_TEST_URL/KEY); skipped otherwise",
 ]
 
 [tool.ruff]

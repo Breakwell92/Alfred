@@ -25,6 +25,9 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
 | `server/alfred_server/models/gateway.py` | `gateway_model(alias, metadata=CallMetadata(...))`: Agno `OpenAILike` model calling the LiteLLM proxy. The only way server code gets an LLM; aliases are `ModelAlias` (`local-router`, `local-main`, `cloud-claude`, `cloud-gpt`, `cloud-gemini`). See `docs/decisions/0005-model-gateway.md`. |
 | `server/alfred_server/budget/` | Budget service: `get_budget_service()` → `BudgetService` with `decide(alias, prompt_tokens, expected_output_tokens, reason)` (or `estimate_cost` + `check`) → `BudgetDecision`, `get_month_to_date_spend()`, `preferred_aliases(task_type)`, `summary()`. Settings (cap, tiers, providers, preferences) persisted in Postgres (`budget_settings`, `budget_months`); spend read from LiteLLM's `LiteLLM_SpendLogs`; prices from the proxy's `/model/info`. Protected routes `GET/PUT /settings/budget`, `GET /spend/summary`. Fails closed. See `docs/decisions/0008-budget-service.md`. |
+| `server/alfred_server/agents/` | Agno agent layer (`docs/decisions/0007-agent-runtime.md`): `base.py` `build_agent(name, ctx=, alias=, db=, instructions=, tools=)` shared factory (gateway model tagged with agent/trigger, history, no markdown, Agno telemetry off); `context.py` `RequestContext` rendered into each agent's system message; `storage.py` `get_agent_db()` (Agno `AsyncPostgresDb`, `agno` schema, 5 s connect timeout) and `check_agent_db()` (bounded `SELECT 1`; chat answers 503 when storage is down, because Agno swallows storage errors); `echo.py` temporary echo agent with `get_time`. Agents are built per request. |
+| `server/alfred_server/chat.py` | `POST /chat` `{text, session_id?, device_id?, device_type?}` → `{reply, session_id}` and `POST /chat/stream` (SSE `token`… then `done` or `error`), protected. Dependencies `agent_db_dependency` / `chat_model_dependency` are overridden in tests. |
+| `server/tests/llm_fakes.py` | `FakeProxy`: mock LiteLLM proxy (canned and streamed completions) for running Agno agents in tests. |
 | `server/alfred_server/db.py` | `check_database()`; `python -m alfred_server.db` checks `ALFRED_DATABASE_URL` is reachable. |
 | `android/` | Android app `com.alfred.app` (Kotlin, Compose + Material 3, Koin, OkHttp, DataStore), Gradle KTS with a version catalog (`gradle/libs.versions.toml`). Unit tests in `app/src/test/`. See `android/README.md`. |
 | `infra/` | `docker-compose.yml` (Postgres + pgvector, GPU Ollama, LiteLLM gateway), `litellm/` (proxy config + `render_config.py`), `.env.example`, `scripts/` (`pull-models.sh`, `check-models.sh`), `certs/` (git-ignored local CAs). See `docs/infra.md`. |
@@ -42,6 +45,7 @@ uv run ruff format                        # format (CI runs --check)
 uv run mypy alfred_server tests           # type check (lenient for now, pydantic plugin on)
 uv run python -m alfred_server            # run the server using ALFRED_* settings (default 127.0.0.1:8000)
 uv run pytest -m "not model"              # skip tests that download/load real speech models
+LITELLM_TEST_URL=http://127.0.0.1:4000 LITELLM_TEST_KEY=<master key> uv run pytest -m integration   # /chat against the real gateway
 uv sync --extra cuda                      # + CUDA/cuDNN wheels for GPU STT and TTS (the 3090 box; not in CI)
 uv run python scripts/bench_stt.py --device cuda   # STT benchmark
 uv run python -m alfred_server.db         # check the server can reach Postgres
@@ -51,6 +55,8 @@ uv run python scripts/bench_tts.py                 # TTS time to first audio / V
 ```
 
 `tests/test_db.py` has a Postgres smoke test that only runs when `TEST_DATABASE_URL` is set (CI sets it with a Postgres service; locally point it at the compose stack).
+
+Tests marked `integration` call the real LiteLLM gateway and local model (compose stack up, `local-main` pulled); they skip unless `LITELLM_TEST_URL` and `LITELLM_TEST_KEY` are set. `tests/test_agents.py` also has a Postgres round trip of Agno sessions that runs when `TEST_DATABASE_URL` is set.
 
 Tests marked `model` load a real model (`tiny.en` on CPU by default, downloaded once to the Hugging Face cache). Run them against the production model with `STT_TEST_MODEL=distil-large-v3 STT_TEST_DEVICE=cuda uv run pytest -m model`.
 
@@ -62,7 +68,7 @@ infra/scripts/pull-models.sh              # pull OLLAMA_MODELS_ROUTER/MAIN (from
 infra/scripts/check-models.sh             # prompt each model, show VRAM use
 ```
 
-`uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`.
+`uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`. On Windows add `--loop asyncio:SelectorEventLoop`: Agno's async Postgres storage (psycopg) can't run on uvicorn's default Windows loop; `python -m alfred_server` sets it for you.
 
 The TTS tests marked `model` skip unless the model files have been downloaded.
 

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from alfred_server import __version__
 from alfred_server.auth import require_api_token
 from alfred_server.budget.api import router as budget_router
+from alfred_server.chat import router as chat_router
 from alfred_server.config import Settings, get_settings
 
 # Cheap to import: the TTS engines themselves are imported when they load.
@@ -27,7 +28,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if get_settings().tts_enabled:
         # Loads Kokoro (warmed up) and the Piper fallback voice.
         await asyncio.to_thread(get_tts)
+    if get_settings().agent_tracing:
+        from agno.tracing import setup_tracing
+
+        from alfred_server.agents.storage import get_agent_db
+
+        # Process-wide OpenTelemetry provider exporting agent spans to the `agno` schema.
+        setup_tracing(db=get_agent_db(), batch_processing=True)
     yield
+    if get_settings().agent_tracing:
+        from opentelemetry import trace
+
+        # Export spans still queued in the batch processor before the process exits.
+        provider = trace.get_tracer_provider()
+        shutdown = getattr(provider, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
 
 
 def tts_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> LocalTTS:
@@ -68,6 +84,7 @@ def create_app() -> FastAPI:
     # GET/PUT /settings/budget, GET /spend/summary.
     protected.include_router(budget_router)
 
+    protected.include_router(chat_router)
     app.include_router(protected)
     return app
 

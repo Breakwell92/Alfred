@@ -43,11 +43,17 @@ class Settings(BaseSettings):
     # means `database_url` with the database name changed to `litellm`, as in compose.
     litellm_database_url: SecretStr | None = None
 
-    # The user's IANA timezone. Budget months and days start at local midnight.
+    # The user's IANA timezone. Budget months and days start at local midnight; agents' request
+    # context and the get_time tool use it too.
     timezone: str = "Europe/London"
     # Budget service (alfred_server.budget, docs/decisions/0008-budget-service.md). LiteLLM
     # prices in USD; the cap and spend are shown in GBP at this fixed rate. Err high.
     budget_usd_to_gbp: float = Field(default=0.80, gt=0)
+
+    # Agno agent layer (docs/decisions/0007-agent-runtime.md).
+    # OpenTelemetry traces of agent runs, model calls and tool calls, stored in Postgres (the
+    # `agno` schema). Off by default so tests never touch a database.
+    agent_tracing: bool = False
 
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.

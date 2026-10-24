@@ -9,7 +9,7 @@ The home server runs Alfred's backing services with Docker Compose from `infra/`
 
 LiteLLM, STT, TTS and the server join the stack in later tickets.
 
-Both ports bind to loopback by default. Postgres holds tokens and memory, and the Ollama API has no authentication, so never bind either to `0.0.0.0`. To reach Ollama from other tailnet devices, set `OLLAMA_BIND_ADDRESS` to this machine's Tailscale IP (`tailscale ip -4`).
+Both ports bind to loopback by default. Postgres holds tokens and memory, and the Ollama API has no authentication, so never bind either to `0.0.0.0`. To reach Ollama from other tailnet devices, set `OLLAMA_BIND_ADDRESS` to this machine's Tailscale IP (`tailscale ip -4`). Nothing then listens on loopback, so set `ALFRED_OLLAMA_BASE_URL` to the same address and port (`infra/scripts/check-models.sh` follows `OLLAMA_BIND_ADDRESS` itself).
 
 ## Prerequisites
 
@@ -56,7 +56,7 @@ The smoke test in `tests/test_db.py` is skipped unless `TEST_DATABASE_URL` is se
 - `nvidia-smi` shows total VRAM use; the Ollama runner appears as a process (on Windows/WSL it may show as "Insufficient permissions" or not at all, but the memory total still counts it).
 - `docker compose exec ollama ollama ps` shows which models are loaded, their size and the CPU/GPU split. Anything other than `100% GPU` means the model spilled to system RAM and will be slow.
 - `docker compose logs ollama | grep "inference compute"` confirms Ollama found the GPU at startup.
-- Budget on the 3090 (24 GB): router + one main model resident, leaving about 4 GB for STT and TTS. Measured numbers are in [ADR 0003](decisions/0003-local-models.md).
+- Budget on the 3090 (24 GB): router + one main model resident, leaving about 6 GB for STT and TTS with `gpt-oss:20b` (about 3 GB with `mistral-small3.2`). Measured numbers are in [ADR 0003](decisions/0003-local-models.md).
 - Ollama settings that affect VRAM (all in `infra/.env`): `OLLAMA_CONTEXT_LENGTH` (default 16384), `OLLAMA_KV_CACHE_TYPE` (`q8_0`), `OLLAMA_MAX_LOADED_MODELS` (2), `OLLAMA_KEEP_ALIVE` (30m). Flash attention is always on.
 
 ## Gotchas
@@ -85,4 +85,4 @@ All documented in `infra/.env.example`. Compose reads `infra/.env`; the server r
 | `OLLAMA_MODELS_ROUTER`, `OLLAMA_MODELS_MAIN` | scripts | Space-separated model tags to pull and check. |
 | `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_KV_CACHE_TYPE` | compose | Ollama memory behaviour. |
 | `ALFRED_DATABASE_URL` | server | SQLAlchemy URL (`postgresql+psycopg://…`). |
-| `ALFRED_OLLAMA_BASE_URL` | server | Ollama API base URL. |
+| `ALFRED_OLLAMA_BASE_URL` | server | Ollama API base URL; must match `OLLAMA_BIND_ADDRESS` and `OLLAMA_PORT`. |

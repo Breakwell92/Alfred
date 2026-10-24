@@ -9,14 +9,14 @@ infra_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$infra_dir/scripts/lib.sh"
 
 load_env "$infra_dir"
-base_url="http://127.0.0.1:${OLLAMA_PORT:-11434}"
+base_url="http://${OLLAMA_BIND_ADDRESS:-127.0.0.1}:${OLLAMA_PORT:-11434}"
 
 echo "==> $base_url/api/tags"
 curl -fsS "$base_url/api/tags" | grep -o '"name":"[^"]*"' | sed 's/"name"://; s/"//g'
 
 for model in $(all_models); do
   # Every candidate must chat and call tools (some library models are classify-only).
-  caps=$(curl -fsS "$base_url/api/show" -d "{\"model\":\"$model\"}" | grep -o '"capabilities":\[[^]]*\]')
+  caps=$(curl -fsS "$base_url/api/show" -d "{\"model\":\"$model\"}" | grep -o '"capabilities":\[[^]]*\]' || true)
   echo "==> prompting $model $caps"
   if [[ "$caps" != *'"completion"'* || "$caps" != *'"tools"'* ]]; then
     echo "    ERROR: $model lacks completion or tools capability" >&2

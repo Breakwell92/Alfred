@@ -21,7 +21,8 @@ jobs:
         image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: alfred
-          POSTGRES_PASSWORD: ci-only
+          # Throwaway CI database: trust auth, so no password lives in the repo.
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: alfred
         ports:
           - 5432:5432
@@ -31,7 +32,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      TEST_DATABASE_URL: postgresql+psycopg://alfred:ci-only@127.0.0.1:5432/alfred
+      TEST_DATABASE_URL: postgresql+psycopg://alfred@127.0.0.1:5432/alfred
     defaults:
       run:
         working-directory: server

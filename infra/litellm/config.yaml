@@ -1,0 +1,54 @@
+# LiteLLM proxy config (STU-52). Code refers only to the aliases (`model_name`) below.
+# Rendered by render_config.py at container start (see docs/infra.md#litellm-model-gateway):
+#   ${VAR:-default}  is replaced from infra/.env
+#   requires_env     drops the alias unless every listed variable is set and non-empty
+# API keys stay as os.environ/VAR references and are read by LiteLLM itself.
+# Model choices: docs/decisions/0005-model-gateway.md (cloud), 0003-local-models.md (local).
+
+model_list:
+  # --- Local (Ollama, same compose network) -----------------------------------------
+  - model_name: local-router
+    litellm_params:
+      model: ollama_chat/${LITELLM_LOCAL_ROUTER_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
+      api_base: http://ollama:11434
+      # Local calls cost nothing; spend logs still record tokens.
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  - model_name: local-main
+    litellm_params:
+      model: ollama_chat/${LITELLM_LOCAL_MAIN_MODEL:-gpt-oss:20b}
+      api_base: http://ollama:11434
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # --- Cloud (each alias exists only when its key is set) ---------------------------
+  - model_name: cloud-claude
+    requires_env: [ANTHROPIC_API_KEY]
+    litellm_params:
+      model: anthropic/${LITELLM_CLOUD_CLAUDE_MODEL:-claude-sonnet-5-5}
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: cloud-gpt
+    requires_env: [OPENAI_API_KEY]
+    litellm_params:
+      model: openai/${LITELLM_CLOUD_GPT_MODEL:-gpt-6.1-sol}
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: cloud-gemini
+    requires_env: [GEMINI_API_KEY]
+    litellm_params:
+      model: gemini/${LITELLM_CLOUD_GEMINI_MODEL:-gemini-4-argon}
+      api_key: os.environ/GEMINI_API_KEY
+
+litellm_settings:
+  # Silently drop OpenAI params a provider doesn't support instead of failing the call.
+  drop_params: true
+  # Spend logs keep tokens, cost and metadata, never prompts or replies.
+  turn_off_message_logging: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # Spend logs, keys and budgets live in the `litellm` database of the compose Postgres.
+  database_url: os.environ/DATABASE_URL
+  store_prompts_in_spend_logs: false

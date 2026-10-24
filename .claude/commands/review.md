@@ -5,6 +5,10 @@ argument-hint: "[STU-xx]"
 
 Review an Alfred pull request, following section 5 of CLAUDE.md. You did not write this code; review it as a demanding outside reviewer. Use the GitHub REST API (`gh api repos/Breakwell92/Alfred/...`), since GraphQL isn't available in cloud sessions.
 
+The rules that apply are the ones on `main`. If the checked-out branch is behind `main`, read `git show origin/main:CLAUDE.md` and `git show origin/main:.claude/commands/review.md` and follow those where they differ from your copy.
+
+**All feedback goes on the PR as comments.** Every finding, whatever its severity, must be its own comment on the PR, never only in a summary, the review body or the Linear ticket. The implementing session's auto-fix acts on PR comments, so a finding that isn't a comment won't get fixed.
+
 Ticket requested: "$ARGUMENTS"
 
 0. **Choose and claim the PR**
@@ -39,7 +43,9 @@ Ticket requested: "$ARGUMENTS"
    - Linear: if the PR has any "Needs Dan to verify" items, move the ticket to **QA** and comment listing exactly what Dan needs to check; otherwise move it to **Done**. Comment with the merge commit either way.
 
    **B. Any feedback** (even minor):
-   - Post one review with event `COMMENT` (`POST /repos/Breakwell92/Alfred/pulls/{n}/reviews`). Put every finding as an **inline comment** on the exact file and line (`comments: [{path, line, side, body}]`). Start each body with **Must fix**, **Should fix** or **Nit**, and say what to change. Only findings that can't attach to a line (something missing entirely, CI failing, branch needs a rebase) go in the review body.
+   - Post one review with event `COMMENT` (`POST /repos/Breakwell92/Alfred/pulls/{n}/reviews`). Put every finding as an **inline comment** on the exact file and line (`comments: [{path, line, side, body}]`). Start each body with **Must fix**, **Should fix** or **Nit**, and say what to change. Attach a finding to the closest relevant line if you can (e.g. a dependency issue on its line in `pyproject.toml`).
+   - Findings that really can't attach to a line (something missing entirely, CI failing, branch needs a rebase, PR description wrong) each get their own PR conversation comment (`POST /repos/Breakwell92/Alfred/issues/{n}/comments`), also starting with the severity.
+   - The review body is only a short summary: what you ran and the results, an acceptance-criteria checklist, and the count of comments by severity. Don't put a finding there that isn't also a comment.
    - Remove `in-review` and add `changes-requested`.
    - Move the Linear ticket to **In Development** and comment with a one-line verdict and the number of comments by severity.
    - The inline comments trigger auto-fix on the implementing session, which addresses them and re-labels the PR `ready-for-review` when done.

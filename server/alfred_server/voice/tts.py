@@ -58,13 +58,31 @@ class VoiceConfig:
     speed: float = 1.0
     """Speaking rate, 0.5–2.0 (1.0 = the voice's natural rate)."""
     pitch: float = 0.0
-    """Pitch shift in semitones, -6 to +6. Applied by resampling, so formants move too."""
+    """Pitch shift in semitones, -6 to +6. Applied by resampling, so formants move too.
+
+    The engine then runs at `speed / 2**(pitch / 12)`, which must also be within 0.5–2.0:
+    e.g. speed 0.5 can't be combined with a higher pitch.
+    """
 
     def __post_init__(self) -> None:
         if not MIN_SPEED <= self.speed <= MAX_SPEED:
             raise ValueError(f"speed must be {MIN_SPEED}–{MAX_SPEED}, got {self.speed}")
         if abs(self.pitch) > MAX_PITCH_SEMITONES:
             raise ValueError(f"pitch must be within ±{MAX_PITCH_SEMITONES:g}, got {self.pitch}")
+        if not MIN_SPEED <= self.engine_speed <= MAX_SPEED:
+            raise ValueError(
+                f"speed {self.speed} with pitch {self.pitch:+g} needs an engine speed of "
+                f"{self.engine_speed:.2f}, outside {MIN_SPEED}–{MAX_SPEED}"
+            )
+
+    @property
+    def pitch_factor(self) -> float:
+        return float(2 ** (self.pitch / 12))
+
+    @property
+    def engine_speed(self) -> float:
+        """Rate to synthesize at, so that resampling for the pitch shift restores `speed`."""
+        return self.speed / self.pitch_factor
 
 
 @dataclass(frozen=True)
@@ -433,8 +451,8 @@ class LocalTTS:
         """Synthesize one segment and convert it to output PCM. Runs in a worker thread."""
         # Pitch: synthesize slower by the pitch factor, then resample as if it had been
         # recorded at a higher rate. Duration ends up as requested; pitch moves by the factor.
-        factor = 2 ** (voice.pitch / 12)
-        speed = min(max(voice.speed / factor, MIN_SPEED), MAX_SPEED)
+        factor = voice.pitch_factor
+        speed = voice.engine_speed
         with self._render_lock:
             started = time.perf_counter()
             try:
@@ -442,9 +460,10 @@ class LocalTTS:
             except Exception:
                 if voice.engine != "kokoro":
                     raise
+                # Length only: replies carry personal content and warnings are persisted.
                 logger.warning(
-                    "Kokoro failed on %r; using Piper voice %s",
-                    text,
+                    "Kokoro failed on a %d-char segment; using Piper voice %s",
+                    len(text),
                     self._fallback_voice,
                     exc_info=True,
                 )
@@ -503,7 +522,13 @@ def build_tts(settings: Settings) -> LocalTTS:
             "(run scripts/download_tts_models.py)"
         )
 
-    if settings.tts_engine == "kokoro":
+    if settings.tts_engine == "kokoro" or not piper_ok:
+        if settings.tts_engine == "piper":
+            logger.warning(
+                "Default Piper voice %s is unavailable; using Kokoro voice %s instead",
+                settings.tts_piper_voice,
+                settings.tts_kokoro_voice,
+            )
         default = VoiceConfig("kokoro", settings.tts_kokoro_voice)
     else:
         default = VoiceConfig("piper", settings.tts_piper_voice)

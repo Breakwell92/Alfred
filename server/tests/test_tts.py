@@ -172,7 +172,11 @@ def test_split_sentences_streams() -> None:
 # --- Voice config ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("speed", "pitch"), [(0.4, 0.0), (2.1, 0.0), (1.0, 7.0), (1.0, -7.0)])
+@pytest.mark.parametrize(
+    ("speed", "pitch"),
+    # The last two are in range on their own, but need an engine speed outside 0.5–2.0.
+    [(0.4, 0.0), (2.1, 0.0), (1.0, 7.0), (1.0, -7.0), (0.5, 6.0), (2.0, -6.0)],
+)
 def test_voice_config_rejects_out_of_range(speed: float, pitch: float) -> None:
     with pytest.raises(ValueError):
         VoiceConfig("kokoro", "bm_george", speed=speed, pitch=pitch)
@@ -318,7 +322,8 @@ def test_falls_back_to_piper_when_kokoro_fails_on_a_sentence(
 
     assert chunks
     assert [c[0] for c in piper.calls] == ["Hi there."]
-    assert "Kokoro failed" in caplog.text
+    assert "Kokoro failed on a 9-char segment" in caplog.text
+    assert "Hi there" not in caplog.text  # replies are personal: never logged
 
 
 def test_piper_errors_propagate() -> None:
@@ -400,6 +405,28 @@ def test_build_tts_falls_back_to_piper_when_kokoro_fails_to_load(
     assert "falling back to Piper voice en_GB-alan-medium" in caplog.text
     assert [v.id for v in tts.voices()] == ["en_GB-alan-medium"]
     assert tts.default_voice == VoiceConfig("piper", "en_GB-alan-medium")
+
+
+def test_voice_config_accepts_pitch_within_engine_range() -> None:
+    voice = VoiceConfig("kokoro", "bm_george", speed=1.0, pitch=6.0)
+
+    assert voice.engine_speed == pytest.approx(1 / 2**0.5)
+
+
+def test_build_tts_defaults_to_kokoro_when_piper_voice_fails_to_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(self: PiperEngine, voice: str) -> object:
+        raise UnknownVoiceError(voice)
+
+    monkeypatch.setattr(PiperEngine, "load", broken)
+    monkeypatch.setattr(KokoroEngine, "load", classmethod(lambda cls, *args: cls(FakeKokoro())))
+
+    with caplog.at_level(logging.WARNING):
+        tts = build_tts(Settings(_env_file=None, tts_model_dir=str(tmp_path)))
+
+    assert tts.default_voice == VoiceConfig("kokoro", "bm_george")
+    assert "Default Piper voice en_GB-alan-medium is unavailable" in caplog.text
 
 
 def test_build_tts_fails_when_no_engine_loads(tmp_path: Path) -> None:

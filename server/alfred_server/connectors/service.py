@@ -1,7 +1,7 @@
 """The connector service: status, credentials, OAuth and tool loading for every connector.
 
 Specialist agents call `await get_connector_service().load_tools("<specialist>")`; the REST
-routes in `api.py` call the rest. Design and rules: docs/decisions/0009-connector-registry.md.
+routes in `api.py` call the rest. Design and rules: docs/decisions/0010-connector-registry.md.
 """
 
 from __future__ import annotations

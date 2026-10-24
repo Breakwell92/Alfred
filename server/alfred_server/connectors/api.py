@@ -3,7 +3,7 @@
 `router` goes on the token-protected router in `main.py`. `callback_router` is the one other
 open route besides `/health`: the provider redirects the user's browser to it, so it can't
 carry the API token. It only accepts a one-time `state` created by the protected
-`/auth/start` within the last 10 minutes (plus PKCE), as decided in ADR 0009.
+`/auth/start` within the last 10 minutes (plus PKCE), as decided in ADR 0010.
 """
 
 import contextlib

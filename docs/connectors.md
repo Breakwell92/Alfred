@@ -2,7 +2,7 @@
 
 A connector is a service Alfred can use: its auth, the tools it provides and how risky and
 private each tool is. Code is in `server/alfred_server/connectors/`; the design and why is in
-[ADR 0009](decisions/0009-connector-registry.md). Per-connector setup notes go in
+[ADR 0010](decisions/0010-connector-registry.md). Per-connector setup notes go in
 `docs/connectors/<name>.md` as connectors are added.
 
 ## Concepts

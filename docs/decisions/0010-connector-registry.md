@@ -1,4 +1,4 @@
-# 0009: Connector registry and encrypted token vault
+# 0010: Connector registry and encrypted token vault
 
 - **Status:** accepted
 - **Date:** 2026-10-24

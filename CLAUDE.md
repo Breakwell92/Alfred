@@ -23,9 +23,10 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/alfred_server/voice/tts.py` | Text-to-speech: `TextToSpeech` protocol, `VoiceConfig`, `SentenceSplitter`, `LocalTTS` (Kokoro on CUDA, Piper CPU fallback), shared `get_tts()`. Output is 24 kHz mono PCM16. `GET /voices` (protected) lists voices. Loaded at startup when `ALFRED_TTS_ENABLED=true`. Engines and benchmarks in `docs/decisions/0005-tts.md`. |
 | `server/scripts/download_tts_models.py`, `tts_demo.py`, `bench_tts.py` | Download Kokoro/Piper model files to `ALFRED_TTS_MODEL_DIR` (default `~/.cache/alfred/tts`); write a sample WAV per installed voice; benchmark time to first audio, CPU and VRAM. |
 | `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
+| `server/alfred_server/models/gateway.py` | `gateway_model(alias, metadata=CallMetadata(...))`: Agno `OpenAILike` model calling the LiteLLM proxy. The only way server code gets an LLM; aliases are `ModelAlias` (`local-router`, `local-main`, `cloud-claude`, `cloud-gpt`, `cloud-gemini`). See `docs/decisions/0005-model-gateway.md`. |
 | `server/alfred_server/db.py` | `check_database()`; `python -m alfred_server.db` checks `ALFRED_DATABASE_URL` is reachable. |
 | `android/` | Android app `com.alfred.app` (Kotlin, Compose + Material 3, Koin, OkHttp, DataStore), Gradle KTS with a version catalog (`gradle/libs.versions.toml`). Unit tests in `app/src/test/`. See `android/README.md`. |
-| `infra/` | `docker-compose.yml` (Postgres + pgvector, GPU Ollama), `.env.example`, `scripts/` (`pull-models.sh`, `check-models.sh`), `certs/` (git-ignored local CAs). See `docs/infra.md`. |
+| `infra/` | `docker-compose.yml` (Postgres + pgvector, GPU Ollama, LiteLLM gateway), `litellm/` (proxy config + `render_config.py`), `.env.example`, `scripts/` (`pull-models.sh`, `check-models.sh`), `certs/` (git-ignored local CAs). See `docs/infra.md`. |
 | `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
 | `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy (package and tests), pytest on every PR and push to `main`. Starts a pgvector Postgres service and sets `TEST_DATABASE_URL` so the `tests/test_db.py` smoke test runs. |
 | `.github/workflows/android.yml` | CI for `android/`: `./gradlew lint testDebugUnitTest assembleDebug` on every PR and push to `main`; uploads the debug APK as an artifact. |
@@ -55,7 +56,7 @@ Tests marked `model` load a real model (`tiny.en` on CPU by default, downloaded 
 ### Infra commands (see `docs/infra.md`)
 
 ```bash
-cd infra && docker compose up -d          # Postgres + Ollama (needs infra/.env)
+cd infra && docker compose up -d          # Postgres + Ollama + LiteLLM (needs infra/.env)
 infra/scripts/pull-models.sh              # pull OLLAMA_MODELS_ROUTER/MAIN (from repo root)
 infra/scripts/check-models.sh             # prompt each model, show VRAM use
 ```
@@ -87,9 +88,10 @@ Needs JDK 21 and the Android SDK (`ANDROID_HOME`, or `sdk.dir` in git-ignored `a
 
 - All server config is read from environment variables by `alfred_server.config.Settings`, prefixed `ALFRED_` (e.g. `ALFRED_LOG_LEVEL`). The server also reads `server/.env` (its working directory with the commands above): for local runs, `cp infra/.env.example server/.env`.
 - Add new settings as typed fields on `Settings`; get them via `get_settings()` (FastAPI: `Depends(get_settings)`), never `os.environ` directly.
-- `get_settings()` is `lru_cache`d. In tests, build `Settings(_env_file=None)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test.
+- `get_settings()` is `lru_cache`d. In tests, build `Settings(...)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test, and stops `Settings` reading `.env`, so a real `server/.env` never leaks into tests. Tests that need a value set an env var or pass it in; `Settings(_env_file=path)` still reads a given file.
 - `ALFRED_HOST` defaults to `127.0.0.1`. Listening on all interfaces (`0.0.0.0`) must be set explicitly (e.g. in compose).
 - Document every new variable in `infra/.env.example`, with no real values. The same file is copied to `infra/.env` (compose) and `server/.env` (server).
+- LLM calls go only through the LiteLLM gateway: `alfred_server.models.gateway.gateway_model("<alias>")`. Never import a provider SDK or name a provider model in server code; cloud API keys live only in `infra/.env` (read by LiteLLM).
 - Secrets in `Settings` are `SecretStr` (e.g. `database_url`); read them with `.get_secret_value()` only where they're used.
 - `ALFRED_API_TOKEN` (`SecretStr`) is the shared bearer token the Android app sends. Every route except `/health` must require it: add routes to the `protected` router in `main.py` (or `Depends(require_api_token)`). Unset → protected routes answer 503 (fail closed). FastAPI's `/docs`, `/redoc` and `/openapi.json` are disabled.
 
@@ -115,17 +117,19 @@ Agents act through Dan's Linear and GitHub accounts, so "assigned" means assigne
 | Feedback being fixed | **In Development** | me | `changes-requested` | implementing agent (auto-fix) |
 | Merged, needs Dan to verify on hardware | **QA** | me | merged | Dan moves to Done after checking |
 | Merged and complete | **Done** | me | merged | — |
+| Review hit the 3-round limit | **Blocked** | me | `needs-dan` | Dan (removing `needs-dan` gives 3 more rounds) |
 | Stuck | **Blocked** | me | — | Dan, then back to the previous stage |
 
 - Move the ticket the moment its stage changes, and comment on the Linear ticket at each transition (what happened, PR link).
-- Swap PR labels so a PR has exactly one of `ready-for-review`, `in-review`, `changes-requested` while open.
+- Swap PR labels so a PR has exactly one of `ready-for-review`, `in-review`, `changes-requested`, `needs-dan` while open.
 - A blocker counts as satisfied when it is **Done** or **QA** (the code is merged; only Dan's hardware check remains).
-- GitHub GraphQL isn't available in cloud sessions: use the REST API (`gh api repos/Breakwell92/Alfred/...`) for labels, reviews and merges.
+- GitHub GraphQL isn't available in cloud sessions: use the REST API (`gh api repos/Breakwell92/Alfred/...`) for labels, reviews and merges. Resolving review threads needs GraphQL, so it's done by `/review`, which runs locally.
 
 ### 1. One ticket per session
 
 - Start every ticket in a fresh session (or after `/clear`). Use `/ticket STU-xx` for a specific ticket, or plain `/ticket` to pick up the next free ticket: **Ready, unassigned**, blockers satisfied, highest priority, earliest milestone, runnable in this environment, not overlapping core modules with work already In Development.
 - Claim the ticket immediately: assign it to `me` and move it to **In Development** before doing anything else. If it turns out to be assigned already when you go to claim it, another session got there first: pick again.
+- **A session is linked to one ticket only.** The `/ticket` session is titled `STU-xx`, the review session `Review STU-xx`; each is bound to (and monitors) only that ticket's PR and works only in that ticket's branch and worktree. If a session finds a link to another ticket (another PR bound or monitored, another ticket in its title, instructions or todos), it removes it before carrying on. Only `/pm` deals with several tickets.
 - Work only on the ticket you were given. If you find other work that's needed, create a new Linear ticket (team Studio, project Alfred, correct milestone, blocked-by relations set) instead of expanding scope.
 - If the ticket turns out much bigger than it looks, stop after planning, propose sub-issues in Linear, and ask Dan before continuing.
 
@@ -154,11 +158,11 @@ Before finishing a ticket, update whichever of these your change affected. Never
 6. Verify: lint, unit tests, and any evals the ticket names. Fix failures; don't skip or delete tests to get green.
 7. Update the shared-memory docs above if affected.
 8. Commit using conventional commits (`feat(router): …`, `fix(tts): …`) referencing the ticket key. Push and open a PR titled `STU-xx: <ticket title>` with: summary, how it was tested, acceptance criteria checklist (ticked or marked "needs Dan"), follow-ups.
-9. Mark the PR as ready for review: add the `ready-for-review` label. This is how `/review` agents find it.
-10. Turn on auto-fix for the PR, always and without asking (it's a per-PR, per-session setting, so this is done every time, including when resuming an existing PR). In the desktop app, bind the PR if needed (`ccd_pr` `get_status` / `bind_pr`) and call `ccd_pr` `set_monitor` with `auto_fix: true` and `address_comments: true`. In a cloud session, start watching the PR's CI checks and review comments and fix clear issues as they arrive. Only where neither works (plain CLI), tell Dan auto-fix is off and to run `/autofix-pr` on the branch.
-11. Comment on the Linear ticket with the PR link, what changed, and anything left over. Move it to **Code Review**.
+9. Turn on auto-fix for the PR, always and without asking, **and confirm it's on before any review starts** (it's a per-PR, per-session setting, so this is done every time, including when resuming an existing PR). In the desktop app, bind the PR if needed (`ccd_pr` `get_status` / `bind_pr`), call `ccd_pr` `set_monitor` with `auto_fix: true` and `address_comments: true`, then call `get_status` again and check it shows auto-fix on for this PR (up to 3 attempts). In a cloud session, subscribe to the PR's CI checks and review comments. If auto-fix can't be confirmed, don't mark the PR ready or start a review: move the ticket to **Blocked** and tell Dan.
+10. Mark the PR as ready for review: add the `ready-for-review` label. Comment on the Linear ticket with the PR link, what changed, and anything left over. Move it to **Code Review**.
+11. Start the review session yourself (`Review STU-xx`, see section 5). Never leave it to the scheduled `/review` task.
 
-**Responding to review feedback** (usually via auto-fix): when a review leaves inline comments, the PR is labelled `changes-requested` and the ticket is back in **In Development**. Fix each clear comment, push, and reply on its thread saying what changed. When every comment is addressed, swap `changes-requested` for `ready-for-review` and move the ticket to **Code Review**. If a comment is ambiguous or architectural, ask Dan and leave the labels as they are.
+**Responding to review feedback** (usually via auto-fix): when a review leaves inline comments, the PR is labelled `changes-requested` and the ticket is back in **In Development**. Fix each clear comment, push, and reply on its thread saying what changed. Don't resolve threads yourself; the reviewer resolves them once it has checked the fix. When every comment is addressed, check auto-fix is still on, swap `changes-requested` for `ready-for-review`, move the ticket to **Code Review**, and **message the `Review STU-xx` session asking it to re-review and merge if happy** (start a fresh review session if it's gone; if neither works, tell Dan plainly). If a comment is ambiguous or architectural, ask Dan and leave the labels as they are. If the PR is labelled `needs-dan`, change nothing until Dan says.
 
 **Acceptance criteria that need hardware or a human** (real phone, GPU benchmarks, multi-hour soak tests, OAuth sign-in, listening tests): don't claim them. Mark them "Needs Dan to verify" in the PR and the Linear comment, with exact steps to verify.
 
@@ -177,11 +181,13 @@ Before finishing a ticket, update whichever of these your change affected. Never
 
 - Never review or merge your own work in the session that wrote it.
 - Reviews run in a fresh session with `/review`, which picks up the oldest open PR labelled `ready-for-review` (or `/review STU-xx` for a specific one) and claims it by swapping the label to `in-review`.
-- Reviews start in two ways. When `/ticket` hands a PR off, it starts a fresh local review session itself (`/review STU-xx`, desktop app only). A scheduled local task in the desktop app also runs `/review` every 30 minutes as a backstop: it catches re-reviews after auto-fix (auto-fix turns can't start sessions) and anything the first route missed.
+- **The implementing session always triggers the review itself.** On hand-off, `/ticket` starts a fresh local review session titled `Review STU-xx` (`/review STU-xx`, desktop app only). For each re-review it messages that same session (or starts a fresh one if it's gone). If it can't do either, it tells Dan plainly. A scheduled local `/review` task may also run as a safety net, but no session relies on it.
+- **Review cycle:** `/ticket` and `/review` go back and forth until the PR is merged, with the review session reporting each outcome back to the `STU-xx` session. At most **3 review rounds**: a round is one `/review` pass, counted from the reviewer's reviews on the PR. If round 3 still has feedback, the reviewer posts it, labels the PR `needs-dan`, moves the ticket to **Blocked** and explains what Dan needs to decide. Removing `needs-dan` gives the PR a fresh 3 rounds.
+- **Earlier comments are checked every round.** Before the fresh review, the reviewer goes through every unresolved thread and finding comment on the PR, checks the code, and resolves the ones that are fixed (replying "Confirmed fixed in <sha>"; conversation comments are minimized as resolved). Ones not fixed stay open with a reply saying what's missing. A PR is only merged with no unresolved threads.
 - The reviewer checks the PR against the ticket's acceptance criteria and this file. It never rewrites the code itself.
 - **Reviews act as a separate GitHub account** (the reviewer), so review comments aren't authored by the account that opened the PR. `/review` routes every GitHub call through `.claude/scripts/gh-as-reviewer.sh`, which loads the reviewer's token from `~/.config/alfred/reviewer-token` (on Windows, `%USERPROFILE%\.config\alfred\reviewer-token`). Reviews therefore run on a machine that has that file; without it (e.g. cloud sessions) `/review` stops. It also stops if the reviewer account is the PR's author.
-- **No feedback** (nothing at all to comment on, CI green, branch mergeable): the reviewer squash-merges the PR, deletes the branch, and moves the ticket to **QA** if it has "Needs Dan to verify" items, otherwise **Done**.
-- **Any feedback**: the reviewer posts every finding as its own comment on the PR: inline on a file and line where possible (one review, event `COMMENT`, since the same account can't "request changes" on its own PR), otherwise as a PR conversation comment, never only in the review summary. It then swaps the label to `changes-requested` and moves the ticket to **In Development**. The comments trigger auto-fix on the implementing session. If auto-fix isn't on, `/ticket STU-xx` in a new session resumes from the PR and its comments.
+- **No feedback** (nothing at all to comment on, every thread resolved, CI green, branch mergeable): the reviewer squash-merges the PR, deletes the branch, and moves the ticket to **QA** if it has "Needs Dan to verify" items, otherwise **Done**.
+- **Any feedback**: the reviewer posts every finding as its own comment on the PR: inline on a file and line where possible (one review, event `COMMENT`, since the same account can't "request changes" on its own PR), otherwise as a PR conversation comment, never only in the review summary. In rounds 1 and 2 it then swaps the label to `changes-requested`, moves the ticket to **In Development** and messages the `STU-xx` session; in round 3 it hands the PR to Dan instead (see the review cycle above). The comments also trigger auto-fix on the implementing session. If auto-fix isn't on, `/ticket STU-xx` in a new session resumes from the PR and its comments.
 - Merge conflicts don't trigger auto-fix on their own, so a reviewer who finds the branch out of date leaves a comment asking for a rebase, which does.
 - Auto-fix acts on clear fixes only; ambiguous or architectural comments come back to Dan.
 

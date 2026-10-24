@@ -14,6 +14,7 @@ dependencies = [
     # Provides the `onnxruntime` module for Kokoro and Piper TTS. Also runs on CPU; replaces
     # the CPU-only `onnxruntime` package (see [tool.uv] below).
     "onnxruntime-gpu>=1.22",
+    "openai>=3.30",
     "piper-tts>=1.3",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",

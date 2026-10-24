@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     database_url: SecretStr = SecretStr("postgresql+psycopg://alfred@127.0.0.1:5432/alfred")
     ollama_base_url: str = "http://127.0.0.1:11434"
 
+    # LiteLLM model gateway (infra/litellm/). Every LLM call goes through it, by alias; see
+    # alfred_server.models.gateway. The key is LITELLM_MASTER_KEY or a virtual key made with it.
+    litellm_base_url: str = "http://127.0.0.1:4000"
+    litellm_api_key: SecretStr | None = None
+
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.
     stt_enabled: bool = False

@@ -11,7 +11,7 @@ Alfred is a personal, wake-word-activated Android voice assistant. Personal use 
   - an Agno agent layer (router plus specialist agents)
   - connectors: Google, Home Assistant, Spotify, Plex, Slack, GitHub, Samsung TVs
   - a scheduler for timed and event-triggered tasks
-- **Cloud LLMs** (Claude, GPT, Gemini) are used only when enabled, under budget, and needed.
+- **Cloud LLMs** (Claude, GPT, Gemini) are used only when enabled, under budget, and needed. The budget service (`alfred_server/budget/`, ADR 0008) answers "may this call use cloud alias X?" from Dan's monthly cap and LiteLLM's spend logs; cloud is off until enabled with `PUT /settings/budget`.
 
 The client and server talk over a WebSocket (see `docs/protocol.md` once it exists), reached over Tailscale (no exposed ports).
 

@@ -74,3 +74,13 @@ def test_explicit_env_file_is_still_read(tmp_path: Path) -> None:
     env_file.write_text("ALFRED_LOG_LEVEL=DEBUG\n")
 
     assert Settings(_env_file=env_file).log_level == "DEBUG"
+
+
+def test_unknown_timezone_fails_at_startup() -> None:
+    with pytest.raises(ValidationError, match="unknown IANA timezone"):
+        Settings(_env_file=None, timezone="Europe/Londn")
+
+
+def test_timezone_default_and_override() -> None:
+    assert Settings(_env_file=None).timezone == "Europe/London"
+    assert Settings(_env_file=None, timezone="America/New_York").timezone == "America/New_York"

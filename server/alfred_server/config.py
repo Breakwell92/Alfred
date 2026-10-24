@@ -7,8 +7,9 @@ documented commands. Document new variables in `infra/.env.example`.
 
 from functools import lru_cache
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +39,15 @@ class Settings(BaseSettings):
     # alfred_server.models.gateway. The key is LITELLM_MASTER_KEY or a virtual key made with it.
     litellm_base_url: str = "http://127.0.0.1:4000"
     litellm_api_key: SecretStr | None = None
+    # LiteLLM's own database, where it writes spend logs (read by the budget service). Unset
+    # means `database_url` with the database name changed to `litellm`, as in compose.
+    litellm_database_url: SecretStr | None = None
+
+    # The user's IANA timezone. Budget months and days start at local midnight.
+    timezone: str = "Europe/London"
+    # Budget service (alfred_server.budget, docs/decisions/0008-budget-service.md). LiteLLM
+    # prices in USD; the cap and spend are shown in GBP at this fixed rate. Err high.
+    budget_usd_to_gbp: float = Field(default=0.80, gt=0)
 
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.
@@ -74,6 +84,15 @@ class Settings(BaseSettings):
     # rather than run Kokoro on the CPU.
     tts_kokoro_device: Literal["auto", "cuda", "cpu"] = "auto"
     tts_piper_voice: str = "en_GB-alan-medium"
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA timezone {value!r}") from exc
+        return value
 
 
 @lru_cache

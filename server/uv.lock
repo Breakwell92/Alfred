@@ -57,6 +57,7 @@ dependencies = [
     { name = "agno" },
     { name = "fastapi" },
     { name = "faster-whisper" },
+    { name = "httpx" },
     { name = "kokoro-onnx" },
     { name = "numpy" },
     { name = "onnxruntime-gpu" },
@@ -66,6 +67,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "soxr" },
     { name = "sqlalchemy" },
+    { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -78,7 +80,6 @@ cuda = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -89,6 +90,7 @@ requires-dist = [
     { name = "agno", specifier = ">=3.1,<4" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "faster-whisper", specifier = ">=1.2" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "kokoro-onnx", specifier = ">=0.6" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "nvidia-cublas-cu12", marker = "extra == 'cuda'", specifier = ">=12.4,<13" },
@@ -101,13 +103,13 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "soxr", specifier = ">=0.5" },
     { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 provides-extras = ["cuda"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "ruff", specifier = ">=0.8" },

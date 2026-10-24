@@ -31,6 +31,7 @@ from alfred_server.agents.base import LOW_CONFIDENCE_MARKER
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.registry import GENERAL, Specialist, SpecialistRegistry
 from alfred_server.budget.models import (
+    ALIAS_PROVIDERS,
     PROVIDER_ALIASES,
     BudgetDecision,
     DecisionCode,
@@ -38,6 +39,7 @@ from alfred_server.budget.models import (
     Provider,
     Tier,
 )
+from alfred_server.budget.service import PROVIDER_NAMES
 from alfred_server.models.gateway import LOCAL_ALIASES, CallMetadata, ModelAlias
 
 logger = logging.getLogger(__name__)
@@ -50,8 +52,8 @@ Complexity = Literal["simple", "standard", "complex"]
 ESCALATION_TOOL_CALLS = 3
 # `simple` requests with at most this many tool calls run on `local-router`.
 ROUTER_MODEL_TOOL_CALLS = 1
-# A local run with this many failed tool calls is retried on cloud.
-FALLBACK_TOOL_ERRORS = 2
+# A local run with this many invalid tool calls (unknown tool, bad arguments) is retried on cloud.
+FALLBACK_INVALID_TOOL_CALLS = 2
 
 # Rough token counts for the budget's pre-call estimate: system prompt and history, each tool
 # round trip (the prompt is sent again), a long document, and the reply.
@@ -63,9 +65,14 @@ EXPECTED_OUTPUT_TOKENS = 500
 # Said instead of a bare low-confidence marker when cloud isn't available.
 NOT_SURE_REPLY = "Sorry, I'm not sure about that."
 
-# Safety net for the classifier: these phrasings are always explicit cloud requests.
+# Safety net for the classifier: commands that start like this are always explicit cloud
+# requests ("Ask Claude to …", "Alfred, use the smart model for this"). Anchored to the start
+# and to what follows the name, so questions *about* the products ("How do I use ChatGPT to …",
+# "Can I use Claude Code?") don't match.
 _EXPLICIT_CLOUD = re.compile(
-    r"\b(?:ask|use|get|have)\s+(?:the\s+)?(claude|chat\s?gpt|gpt|gemini|smart(?:er)?\s+model)\b",
+    r"^\s*(?:alfred,?\s+)?(?:please\s+)?(?:ask|use|have)\s+(?:the\s+)?"
+    r"(claude|chat\s?gpt|gpt|gemini|smart(?:er)?\s+model)\b"
+    r"(?=\s+(?:to|about|for)\b|\s*[:,.?!]|\s*$)",
     re.IGNORECASE,
 )
 
@@ -259,19 +266,33 @@ def _could_become_marker(text: str) -> bool:
     return LOW_CONFIDENCE_MARKER.startswith(text.strip())
 
 
-def _tool_errors(run: RunOutput) -> int:
-    """Failed tool calls in this run.
+def _invalid_tool_calls(run: RunOutput) -> int:
+    """Tool calls in this run that Agno couldn't start: unknown tool or invalid arguments.
 
-    A call to a tool that raised is a `ToolExecution` with `tool_call_error`. A call Agno
-    couldn't even start (unknown tool, unparseable arguments) leaves only a tool message
-    saying so, so count this run's tool messages that no successful execution answered.
+    Those leave only a tool message saying so, with no `ToolExecution`. A tool that ran and
+    raised (Home Assistant offline, expired token) is not the model's fault and isn't counted.
     """
-    succeeded = {t.tool_call_id for t in run.tools or [] if not t.tool_call_error}
+    executed = {t.tool_call_id for t in run.tools or []}
     return sum(
         1
         for m in run.messages or []
-        if m.role == "tool" and not m.from_history and m.tool_call_id not in succeeded
+        if m.role == "tool" and not m.from_history and m.tool_call_id not in executed
     )
+
+
+def _needs_fallback(run: RunOutput) -> bool:
+    """Should this local run be retried on cloud?
+
+    Only when the model itself failed (the low-confidence marker, or repeated invalid tool
+    calls), and never once a tool has done something: a retry would repeat that action, and
+    deleting the run would lose its record.
+    """
+    if run.status == RunStatus.error:
+        return False
+    if any(not t.tool_call_error for t in run.tools or []):
+        return False
+    marker = isinstance(run.content, str) and _is_marker(run.content)
+    return marker or _invalid_tool_calls(run) >= FALLBACK_INVALID_TOOL_CALLS
 
 
 def _with_announcement(announcement: str | None, reply: str) -> str:
@@ -364,6 +385,9 @@ class Router:
 
         candidates = await asyncio.to_thread(self.budget.preferred_aliases, task_type(c))
         explicit = reason == "user_request"
+        # An explicit request for a provider that is turned off is told so, then served by the
+        # next preferred one.
+        unavailable: str | None = None
         if explicit:
             wanted = PROVIDER_ALIASES[c.preferred_provider] if c.preferred_provider else None
             if wanted in candidates:
@@ -371,6 +395,8 @@ class Router:
             elif not candidates:
                 # Cloud is off (or the settings can't be read): ask anyway, for the reason to say.
                 candidates = [wanted or PROVIDER_ALIASES["claude"]]
+            elif c.preferred_provider is not None:
+                unavailable = f"{PROVIDER_NAMES[c.preferred_provider]} is turned off"
         if not candidates:
             return ModelChoice(local_alias, f"{why}; cloud unavailable")
 
@@ -378,11 +404,16 @@ class Router:
             candidates, estimate_prompt_tokens(text, c), reason
         )
         if alias is not None and decision is not None:
-            return ModelChoice(alias, why, decision.code, decision.tier)
+            used = None
+            if unavailable:
+                used = f"{unavailable}, so I asked {PROVIDER_NAMES[ALIAS_PROVIDERS[alias]]}."
+            return ModelChoice(alias, why, decision.code, decision.tier, used)
         assert decision is not None  # candidates was not empty
         # An explicit request is always told why it stayed local; otherwise only the
         # once-a-month over-budget announcement is said.
         announcement = decision.message if (explicit or decision.announce) else None
+        if announcement and unavailable:
+            announcement = f"{unavailable}. {announcement}"
         return ModelChoice(
             local_alias,
             f"{why}; budget refused",
@@ -442,11 +473,14 @@ class Router:
             return
         try:
             if isinstance(self.db, AsyncBaseDb):
-                await self.db.delete_run(run_id)
+                deleted = await self.db.delete_run(run_id)
             else:
-                await asyncio.to_thread(self.db.delete_run, run_id)
+                deleted = await asyncio.to_thread(self.db.delete_run, run_id)
         except Exception:
             logger.exception("couldn't delete failed run %s", run_id)
+            return
+        if not deleted:
+            logger.warning("failed run %s wasn't deleted; the retry will see it in history", run_id)
 
     async def run(self, route: Route, text: str, ctx: RequestContext) -> RoutedReply:
         """Run the request to completion. Raises `AgentRunError` if the run fails."""
@@ -456,10 +490,7 @@ class Router:
             text, session_id=ctx.session_id, metadata=self._run_metadata(route, choice)
         )
         announcement = choice.announcement
-        if run.status != RunStatus.error and (
-            (isinstance(run.content, str) and _is_marker(run.content))
-            or _tool_errors(run) >= FALLBACK_TOOL_ERRORS
-        ):
+        if _needs_fallback(run):
             fallback, said = await self._fallback(route, text)
             announcement = announcement or said
             if fallback is not None:
@@ -494,9 +525,7 @@ class Router:
             return
 
         announcement = route.choice.announcement
-        if not attempt.sent and (
-            _is_marker(attempt.held) or await attempt.tool_errors() >= FALLBACK_TOOL_ERRORS
-        ):
+        if not attempt.sent and await attempt.needs_fallback():
             fallback, said = await self._fallback(route, text)
             if said and not announcement:
                 announcement = said
@@ -569,12 +598,14 @@ class _StreamAttempt:
             logger.exception("stream run failed (session %s)", ctx.session_id)
             self.failed = True
 
-    async def tool_errors(self) -> int:
-        """Failed tool calls, read back from the stored run (events miss unknown tools)."""
-        if self.agent is None or self.run_id is None:
-            return 0
-        run = await self.agent.aget_run_output(self.run_id, session_id=self.session_id)
-        return _tool_errors(run) if run is not None else 0
+    async def needs_fallback(self) -> bool:
+        """`_needs_fallback` on the stored run (stream events miss invalid tool calls)."""
+        run = None
+        if self.agent is not None and self.run_id is not None:
+            run = await self.agent.aget_run_output(self.run_id, session_id=self.session_id)
+        if run is None:  # can't check its tools: only a bare marker counts
+            return _is_marker(self.held)
+        return _needs_fallback(run)
 
     def reply(self) -> str:
         reply = self.completed if self.completed is not None else "".join(self.parts)

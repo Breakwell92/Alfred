@@ -157,12 +157,23 @@ def test_explicit_request_without_a_provider_uses_the_preferred_order(h: Harness
     assert choice.alias == "cloud-gpt"
 
 
-def test_explicit_request_for_a_disabled_provider_uses_the_first_enabled(h: Harness) -> None:
-    h.budget.aliases = ["cloud-claude", "cloud-gemini"]  # GPT turned off
+def test_explicit_request_for_a_disabled_provider_says_so(h: Harness) -> None:
+    h.budget.aliases = ["cloud-claude", "cloud-gpt"]  # Gemini turned off
 
-    choice = select(h, explicit_cloud_request=True, preferred_provider="gpt")
+    choice = select(h, explicit_cloud_request=True, preferred_provider="gemini")
 
     assert choice.alias == "cloud-claude"
+    assert choice.announcement == "Gemini is turned off, so I asked Claude."
+
+
+def test_explicit_request_for_a_disabled_provider_refused_by_budget(h: Harness) -> None:
+    h.budget.aliases = ["cloud-claude"]  # Gemini turned off
+    h.budget.decisions = {"cloud-claude": deny("over_remaining", "That would cost too much.")}
+
+    choice = select(h, explicit_cloud_request=True, preferred_provider="gemini")
+
+    assert choice.alias == "local-main"
+    assert choice.announcement == "Gemini is turned off. That would cost too much."
 
 
 def test_explicit_request_refused_by_budget_says_why(h: Harness) -> None:
@@ -289,9 +300,11 @@ def test_unknown_specialist_becomes_general(h: Harness) -> None:
     ("text", "provider"),
     [
         ("Ask Claude to write me a poem", "claude"),
-        ("use chatgpt for this", "gpt"),
-        ("can you get Gemini to check", "gemini"),
-        ("use the smart model to explain tides", None),
+        ("Alfred, use ChatGPT for this", "gpt"),
+        ("please ask Gemini about the tides", "gemini"),
+        ("Have Claude: summarise this", "claude"),
+        ("Use the smart model to explain tides", None),
+        ("use the smarter model.", None),
     ],
 )
 def test_explicit_cloud_phrases_are_never_missed(
@@ -303,6 +316,25 @@ def test_explicit_cloud_phrases_are_never_missed(
 
     assert c.explicit_cloud_request is True
     assert c.preferred_provider == provider
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "How do I use ChatGPT to write a CV?",
+        "Can I use Claude Code on Windows?",
+        "Should I get the Gemini app?",
+        "Ask Claude Code questions in the terminal",
+        "My friend said to ask Claude to help",
+    ],
+)
+def test_questions_about_the_products_stay_local(h: Harness, text: str) -> None:
+    h.proxy.responses.append(route_completion(cloud=False))
+
+    c = classify(h, text)
+
+    assert c.explicit_cloud_request is False
+    assert c.preferred_provider is None
 
 
 # --- Running and fallback ------------------------------------------------------------------
@@ -359,29 +391,84 @@ def test_two_failed_tool_calls_retry_on_cloud(h: Harness) -> None:
     assert h.models_called()[-1] == "cloud-claude"
 
 
-def test_tools_that_raise_count_as_failed_calls(h: Harness) -> None:
-    def broken() -> str:
-        """Always fails."""
-        raise RuntimeError("boom")
+def broken() -> str:
+    """Always fails, like Home Assistant being offline."""
+    raise RuntimeError("boom")
+
+
+def switch_on() -> str:
+    """Does something in the world."""
+    return "Switched on."
+
+
+def with_tools(h: Harness, *tools: Any) -> Route:
+    """A `general` specialist with `tools`, on `local-main`, with cloud on."""
 
     def factory(ctx: RequestContext, model: Model, db: Any) -> Agent:
-        return Agent(model=model, db=db, tools=[broken], telemetry=False)
+        return Agent(model=model, db=db, tools=list(tools), telemetry=False)
 
     registry = SpecialistRegistry()
     registry.register(Specialist(GENERAL, "anything", factory))
     h.router.registry = registry
     h.budget.aliases = CLOUD
+    return Route(Classification(), registry.get(GENERAL), ModelChoice("local-main", "standard"))
+
+
+def test_tools_that_raise_are_not_retried(h: Harness) -> None:
+    # The model called the tool correctly; cloud would fail the same way and cost money.
+    route = with_tools(h, broken)
     h.proxy.responses += [
         tool_call_completion("broken", {}, "call_1"),
         tool_call_completion("broken", {}, "call_2"),
-        reply("It broke."),
-        reply("Fixed on cloud."),
+        reply("Home Assistant isn't answering."),
     ]
-    route = Route(Classification(), registry.get(GENERAL), ModelChoice("local-main", "standard"))
 
     result = run(h, route)
 
-    assert result.reply == "Fixed on cloud."
+    assert result.reply == "Home Assistant isn't answering."
+    assert h.budget.calls == []
+
+
+def test_a_successful_tool_call_prevents_a_retry(h: Harness) -> None:
+    route = with_tools(h, switch_on)
+    h.proxy.responses += [
+        tool_call_completion("switch_on", {}, "call_1"),
+        tool_call_completion("no_such_tool", {}, "call_2"),
+        tool_call_completion("no_such_tool", {}, "call_3"),
+        reply("Done, mostly."),
+    ]
+
+    result = run(h, route)
+
+    assert result.reply == "Done, mostly."
+    assert h.budget.calls == []  # retrying would switch it on twice
+    assert len(asyncio.run(h.stored_runs())) == 1  # and the record is kept
+
+
+def test_a_successful_tool_call_prevents_a_marker_retry(h: Harness) -> None:
+    route = with_tools(h, switch_on)
+    h.proxy.responses += [tool_call_completion("switch_on", {}), reply(LOW_CONFIDENCE_MARKER)]
+
+    result = run(h, route)
+
+    assert result.reply == NOT_SURE_REPLY
+    assert h.budget.calls == []
+
+
+def test_retry_goes_ahead_when_the_failed_run_isnt_deleted(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def not_deleted(run_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(h.db, "delete_run", not_deleted)
+    h.budget.aliases = CLOUD
+    h.proxy.responses += [reply(LOW_CONFIDENCE_MARKER), reply("It's 42.")]
+
+    result = run(h, h.route(ModelChoice("local-main", "standard")))
+
+    assert result.reply == "It's 42."
+    assert "wasn't deleted" in caplog.text
 
 
 def test_one_failed_tool_call_is_not_retried(h: Harness) -> None:
@@ -490,6 +577,21 @@ def test_stream_two_failed_tool_calls_retry_on_cloud(h: Harness) -> None:
 
     assert tokens(items) == ["Cloud ", "answer."]
     assert h.models_called() == ["local-main"] * 3 + ["cloud-claude"]
+
+
+def test_stream_with_a_successful_tool_call_is_not_retried(h: Harness) -> None:
+    route = with_tools(h, switch_on)
+    h.proxy.responses += [
+        streamed_tool_call("switch_on", {}, "call_1"),
+        streamed_tool_call("no_such_tool", {}, "call_2"),
+        streamed_tool_call("no_such_tool", {}, "call_3"),
+        streamed_completion("<<UN", "SURE>>"),
+    ]
+
+    items = stream(h, route)
+
+    assert tokens(items) == [NOT_SURE_REPLY]
+    assert h.budget.calls == []
 
 
 def test_stream_that_already_sent_text_is_not_retried(h: Harness) -> None:

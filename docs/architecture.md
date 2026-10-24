@@ -4,7 +4,7 @@ Alfred is a personal, wake-word-activated Android voice assistant. Personal use 
 
 - **Android client (thin):** wake word, audio capture and playback, phone actions (SMS, alarms, torch, …).
 - **Home server** (Linux box with an RTX 3090):
-  - speech-to-text and text-to-speech
+  - speech-to-text (`alfred_server/voice/stt.py`, faster-whisper on CUDA; ADR 0002) and text-to-speech
   - local LLMs, served through LiteLLM alongside cloud models
   - an Agno agent layer (router plus specialist agents)
   - connectors: Google, Home Assistant, Spotify, Plex, Slack, GitHub, Samsung TVs

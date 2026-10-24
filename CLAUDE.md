@@ -78,7 +78,7 @@ Needs JDK 21 and the Android SDK (`ANDROID_HOME`, or `sdk.dir` in git-ignored `a
 
 - All server config is read from environment variables by `alfred_server.config.Settings`, prefixed `ALFRED_` (e.g. `ALFRED_LOG_LEVEL`). The server also reads `server/.env` (its working directory with the commands above): for local runs, `cp infra/.env.example server/.env`.
 - Add new settings as typed fields on `Settings`; get them via `get_settings()` (FastAPI: `Depends(get_settings)`), never `os.environ` directly.
-- `get_settings()` is `lru_cache`d. In tests, build `Settings(_env_file=None)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test.
+- `get_settings()` is `lru_cache`d. In tests, build `Settings(...)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test, and stops `Settings` reading `.env`, so a real `server/.env` never leaks into tests. Tests that need a value set an env var or pass it in; `Settings(_env_file=path)` still reads a given file.
 - `ALFRED_HOST` defaults to `127.0.0.1`. Listening on all interfaces (`0.0.0.0`) must be set explicitly (e.g. in compose).
 - Document every new variable in `infra/.env.example`, with no real values. The same file is copied to `infra/.env` (compose) and `server/.env` (server).
 - Secrets in `Settings` are `SecretStr` (e.g. `database_url`); read them with `.get_secret_value()` only where they're used.

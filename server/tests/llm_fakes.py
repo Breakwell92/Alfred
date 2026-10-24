@@ -28,25 +28,44 @@ def tool_call_completion(name: str, arguments: dict[str, Any], call_id: str = "c
     return completion({"role": "assistant", "content": "", "tool_calls": [call]}, "tool_calls")
 
 
+def _chunk(delta: dict[str, Any], finish_reason: str | None = None) -> str:
+    body = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "local-main",
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(body)}\n\n"
+
+
+def _sse_response(events: list[str]) -> httpx.Response:
+    return httpx.Response(
+        200,
+        content="".join([*events, "data: [DONE]\n\n"]).encode(),
+        headers={"content-type": "text/event-stream"},
+    )
+
+
 def streamed_completion(*deltas: str) -> httpx.Response:
     """A streamed (SSE) chat completion sending `deltas` as separate content chunks."""
+    events = [_chunk({"role": "assistant", "content": ""})]
+    events += [_chunk({"content": d}) for d in deltas]
+    events += [_chunk({}, "stop")]
+    return _sse_response(events)
 
-    def chunk(delta: dict[str, Any], finish_reason: str | None = None) -> str:
-        body = {
-            "id": "chatcmpl-test",
-            "object": "chat.completion.chunk",
-            "created": 0,
-            "model": "local-main",
-            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
-        }
-        return f"data: {json.dumps(body)}\n\n"
 
-    events = [chunk({"role": "assistant", "content": ""})]
-    events += [chunk({"content": d}) for d in deltas]
-    events += [chunk({}, "stop"), "data: [DONE]\n\n"]
-    return httpx.Response(
-        200, content="".join(events).encode(), headers={"content-type": "text/event-stream"}
-    )
+def streamed_tool_call(name: str, arguments: dict[str, Any], call_id: str = "call_1") -> Any:
+    """A streamed completion asking for one tool call."""
+    call = {
+        "index": 0,
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
+    events = [_chunk({"role": "assistant", "content": None, "tool_calls": [call]})]
+    events += [_chunk({}, "tool_calls")]
+    return _sse_response(events)
 
 
 class FakeProxy:
@@ -74,3 +93,29 @@ class FakeProxy:
 
     def body(self, i: int = 0) -> dict[str, Any]:
         return json.loads(self.requests[i].content)
+
+
+def route_completion(
+    *,
+    agent: str = "general",
+    level: str = "standard",
+    long: bool = False,
+    tools: int = 1,
+    cloud: bool = False,
+    provider: str = "none",
+) -> dict[str, Any]:
+    """The router classifier's answer (`local-router`'s compact JSON)."""
+    answer = {
+        "agent": agent,
+        "level": level,
+        "long": long,
+        "tools": tools,
+        "cloud": cloud,
+        "provider": provider,
+    }
+    return completion({"role": "assistant", "content": json.dumps(answer)})
+
+
+def reply(text: str) -> dict[str, Any]:
+    """A plain assistant reply."""
+    return completion({"role": "assistant", "content": text})

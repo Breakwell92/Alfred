@@ -19,6 +19,10 @@ from alfred_server.models.gateway import CallMetadata, ModelAlias, gateway_model
 # Earlier turns of the session sent with each request (Agno reads them from the db).
 HISTORY_RUNS = 10
 
+# A reply of exactly this means "I can't answer this reliably": the router then retries once on
+# a cloud model if the budget allows (docs/decisions/0009-router.md). Never shown to the user.
+LOW_CONFIDENCE_MARKER = "<<UNSURE>>"
+
 # Shared by every agent. Replies are usually spoken, so no markdown and no lists.
 BASE_INSTRUCTIONS: tuple[str, ...] = (
     "You are Alfred, a personal assistant. Replies are usually read aloud by a speech engine.",
@@ -26,6 +30,7 @@ BASE_INSTRUCTIONS: tuple[str, ...] = (
     "Write plain sentences: no markdown, bullet points, tables, emoji or code blocks.",
     "Use British English. Give times in the user's timezone from the request context.",
     "Use your tools for facts you can look up rather than guessing.",
+    f"If you cannot answer reliably, reply with exactly {LOW_CONFIDENCE_MARKER} and nothing else.",
 )
 
 

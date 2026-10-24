@@ -23,7 +23,7 @@ Agno ships AgentOS, a FastAPI app that serves agents plus sessions, memory, appr
 - **Chat endpoints** (`alfred_server/chat.py`), both requiring the API token:
   - `POST /chat` `{"text", "session_id"?, "device_id"?, "device_type"?}` → `{"reply", "session_id"}`. No `session_id` starts a new conversation and the response carries the id to reuse. `session_id` and `device_id` must match `^[A-Za-z0-9._:-]+$` (they are written into the system prompt; `RequestContext` enforces the same). 503 when the gateway key isn't set or conversation storage is unreachable; 502 when the run fails (model errors).
   - `POST /chat/stream`, same body. The same 503s come back as plain HTTP errors before the stream starts. Otherwise it answers `text/event-stream`: `event: token` / `data: {"text": "..."}` per text delta, then `event: done` / `data: {"reply", "session_id"}`, or `event: error` / `data: {"message", "session_id"}`.
-  - They run a temporary `echo` agent on `local-main` with one tool, `get_time`. STU-55 replaces it with the router (registering it as `general` until specialists exist).
+  - They ran a temporary `echo` agent on `local-main` with one tool, `get_time`. Since STU-55 they go through the router (ADR 0009), with the echo agent registered as the `general` specialist until real ones exist.
 
 ## Consequences
 

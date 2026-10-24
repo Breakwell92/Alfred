@@ -1,4 +1,4 @@
-"""Temporary "hello" agent behind `/chat` until the router (STU-55) replaces it.
+"""Temporary "hello" agent, registered as the router's `general` specialist until real ones exist.
 
 It has one trivial tool, `get_time`, to prove tool calling works end to end on the local model.
 """

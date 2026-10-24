@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Alfred chat</title>
+  <link rel="stylesheet" href="/ui/chat.css">
+  <script src="/ui/chat.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>Alfred</h1>
+    <span id="session" class="muted"></span>
+    <nav>
+      <button type="button" id="new-session">New conversation</button>
+      <button type="button" id="forget-token">Forget token</button>
+    </nav>
+  </header>
+
+  <section id="token-form" hidden>
+    <form id="token">
+      <label for="token-input">API token</label>
+      <input id="token-input" type="password" autocomplete="off" required>
+      <button type="submit">Save</button>
+      <p class="muted">Kept in this browser only. It's the server's <code>ALFRED_API_TOKEN</code>.</p>
+      <p id="token-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <section id="confirmations" hidden>
+    <h2>Waiting for your confirmation</h2>
+    <ul id="confirmation-list"></ul>
+  </section>
+
+  <main id="log" aria-live="polite"></main>
+
+  <form id="composer">
+    <label for="message" class="visually-hidden">Message</label>
+    <textarea id="message" rows="2" maxlength="4000" placeholder="Ask Alfred…" required></textarea>
+    <button type="submit" id="send">Send</button>
+  </form>
+</body>
+</html>

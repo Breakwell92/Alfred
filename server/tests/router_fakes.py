@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from alfred_server.budget.models import BudgetDecision, DecisionCode, EscalationReason, Tier
+from alfred_server.budget.models import (
+    BudgetDecision,
+    CostEstimate,
+    DecisionCode,
+    EscalationReason,
+    Tier,
+)
 from alfred_server.models.gateway import ModelAlias
 
 ALLOW = BudgetDecision(True, "ok", "free", "About £0.01; £19.99 left this month.")
+# `FakeBudget.estimate_cost` prices every token at this (USD, and GBP at 0.8 per dollar).
+USD_PER_TOKEN = 0.00001
 
 
 def deny(
@@ -46,3 +54,9 @@ class FakeBudget:
     ) -> BudgetDecision:
         self.calls.append((alias, reason))
         return self.decisions.get(alias, ALLOW)
+
+    def estimate_cost(
+        self, alias: ModelAlias, prompt_tokens: int, expected_output_tokens: int
+    ) -> CostEstimate:
+        usd = (prompt_tokens + expected_output_tokens) * USD_PER_TOKEN
+        return CostEstimate(alias, prompt_tokens, expected_output_tokens, usd, usd * 0.8)

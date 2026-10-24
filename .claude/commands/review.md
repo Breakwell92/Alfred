@@ -22,6 +22,7 @@ Ticket requested: "$ARGUMENTS"
    - Otherwise list open, non-draft PRs labelled `ready-for-review` and take the oldest (by when the label was added, or creation date).
    - Claim it: re-check its labels; if it no longer has `ready-for-review`, another reviewer took it, so pick again. Otherwise remove `ready-for-review` and add `in-review`.
    - If no PR is waiting, say so and stop.
+   - **Rename the session after the PR's ticket key** (e.g. `Review STU-48`, so it's distinguishable from the implementing session) as soon as the PR is claimed: in the Claude desktop app use the `set_session_title` tool (`mcp__ccd_session_mgmt__set_session_title`, load it via ToolSearch if it's deferred) on this session. If no session-rename tool is available (CLI, cloud), skip this silently; in the CLI I can run `/rename Review STU-xx` myself.
 
 1. **Load context**
    - Fetch the Linear ticket named in the PR title (description, acceptance criteria, out of scope, comments) and the tickets it depends on.

@@ -17,6 +17,7 @@ Ticket requested: "$ARGUMENTS"
      5. Pick by priority (Urgent first), then milestone order (M1 before M2…), then lowest ticket number.
    - **Claim it before anything else:** re-fetch the ticket; if it now has an assignee, another session took it, so pick again. Otherwise assign it to `me` and move it to **In Development** in one update, then comment "Picked up by a Claude Code session". Tell me in one line which ticket you picked and why, and carry on.
    - If nothing qualifies, stop and show what's blocking progress (as `/next` would).
+   - **Rename the session to the ticket key** (e.g. `STU-48`) as soon as the ticket is chosen, including when resuming: in the Claude desktop app use the `set_session_title` tool (`mcp__ccd_session_mgmt__set_session_title`, load it via ToolSearch if it's deferred) on this session. If no session-rename tool is available (CLI, cloud), skip this silently; in the CLI I can run `/rename STU-xx` myself.
 
 1. **Load context**
    - Fetch the ticket from Linear, including its relations and comments.

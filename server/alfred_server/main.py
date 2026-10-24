@@ -16,6 +16,7 @@ from alfred_server.connectors.api import callback_router as connector_callback_r
 from alfred_server.connectors.api import router as connector_router
 from alfred_server.connectors.refresher import TokenRefresher
 from alfred_server.connectors.service import get_connector_service
+from alfred_server.ui.routes import router as ui_router
 
 # Cheap to import: the TTS engines themselves are imported when they load.
 from alfred_server.voice.tts import LocalTTS, get_tts, voices_response
@@ -72,8 +73,8 @@ def tts_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> Loca
 
 
 def create_app() -> FastAPI:
-    # Interactive docs and the OpenAPI schema are off so `/health` is the only
-    # unauthenticated route.
+    # Interactive docs and the OpenAPI schema are off. The only unauthenticated routes are
+    # `/health`, the chat page's static files and the OAuth callback (see below).
     app = FastAPI(
         title="Alfred",
         version=__version__,
@@ -86,6 +87,10 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # The web chat page's static files are open too: a browser can't send the bearer token
+    # when it opens a page. They hold no data; every API call the page makes is protected.
+    app.include_router(ui_router)
 
     # Every other route goes on this router so it requires the API token.
     protected = APIRouter(dependencies=[Depends(require_api_token)])

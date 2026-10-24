@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
 from agno.models.base import Model
 from fastapi.testclient import TestClient
@@ -26,9 +27,10 @@ from tests.llm_fakes import (
     reply,
     route_completion,
     streamed_completion,
+    streamed_tool_call,
     tool_call_completion,
 )
-from tests.router_fakes import FakeBudget, deny
+from tests.router_fakes import USD_PER_TOKEN, FakeBudget, deny
 
 TOKEN = "test-token-not-a-secret"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -208,8 +210,115 @@ def test_stream_yields_tokens_then_done(harness: ChatHarness) -> None:
     events = sse_events(response.text)
     tokens = [data["text"] for name, data in events if name == "token"]
     assert tokens == ["It's ", "five ", "past ", "two."]
-    assert events[-1] == ("done", {"reply": "It's five past two.", "session_id": "s1"})
+    name, done = events[-1]
+    assert name == "done"
+    assert (done["reply"], done["session_id"]) == ("It's five past two.", "s1")
     assert harness.proxy.body(1)["stream"] is True
+
+
+def test_stream_done_says_how_the_turn_ran(harness: ChatHarness) -> None:
+    harness.reply_with(route_completion(level="simple", tools=0), streamed_completion("Hi."))
+
+    response = harness.post("/chat/stream", text="Hello", session_id="s1")
+
+    turn = sse_events(response.text)[-1][1]["turn"]
+    assert turn == {
+        "alias": "local-router",
+        "tier": "local",
+        "reason": "simple",
+        "budget_code": None,
+        "budget_tier": None,
+        "specialist": "general",
+        "tools": [],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost_gbp": None,
+    }
+
+
+def test_stream_done_lists_tool_calls(harness: ChatHarness) -> None:
+    harness.reply_with(
+        route_completion(),
+        streamed_tool_call("get_time", {}),
+        streamed_completion("It's two."),
+    )
+
+    response = harness.post("/chat/stream", text="What time is it?", session_id="s1")
+
+    turn = sse_events(response.text)[-1][1]["turn"]
+    assert turn["tools"] == ["get_time"]
+    assert turn["alias"] == "local-main"
+
+
+def test_stream_done_prices_a_cloud_turn(harness: ChatHarness) -> None:
+    harness.budget = FakeBudget(["cloud-claude"])
+    harness.reply_with(route_completion(), streamed_completion("Sure.", usage=(1000, 200)))
+
+    response = harness.post("/chat/stream", text="Ask Claude to plan my week", session_id="s1")
+
+    turn = sse_events(response.text)[-1][1]["turn"]
+    assert (turn["alias"], turn["tier"], turn["reason"]) == (
+        "cloud-claude",
+        "cloud",
+        "explicit_request",
+    )
+    assert (turn["input_tokens"], turn["output_tokens"]) == (1000, 200)
+    assert turn["cost_gbp"] == pytest.approx(1200 * USD_PER_TOKEN * 0.8)
+
+
+def test_stream_done_without_a_price_still_finishes(harness: ChatHarness) -> None:
+    class Unpriced(FakeBudget):
+        def estimate_cost(self, *args: Any) -> Any:
+            raise RuntimeError("no price")
+
+    harness.budget = Unpriced(["cloud-claude"])
+    harness.reply_with(route_completion(), streamed_completion("Sure."))
+
+    response = harness.post("/chat/stream", text="Ask Claude to plan my week", session_id="s1")
+
+    name, done = sse_events(response.text)[-1]
+    assert name == "done"
+    assert done["turn"]["tier"] == "cloud"
+    assert done["turn"]["cost_gbp"] is None
+
+
+def test_stream_done_after_a_cloud_retry_describes_the_retry(harness: ChatHarness) -> None:
+    harness.budget = FakeBudget(["cloud-claude"])
+    harness.reply_with(
+        route_completion(),
+        streamed_completion("<<UN", "SURE>>", usage=(300, 5)),
+        streamed_completion("Cloud ", "answer.", usage=(1000, 200)),
+    )
+
+    response = harness.post("/chat/stream", text="What's 6 times 7?", session_id="s1")
+
+    name, done = sse_events(response.text)[-1]
+    assert (name, done["reply"]) == ("done", "Cloud answer.")
+    turn = done["turn"]
+    assert (turn["alias"], turn["tier"], turn["reason"]) == (
+        "cloud-claude",
+        "cloud",
+        "fallback from local-main",
+    )
+    assert (turn["input_tokens"], turn["output_tokens"]) == (1000, 200)
+    assert turn["cost_gbp"] == pytest.approx(1200 * USD_PER_TOKEN * 0.8)
+
+
+def test_stream_done_survives_an_unreadable_stored_run(
+    harness: ChatHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("storage hiccup")
+
+    monkeypatch.setattr(Agent, "aget_run_output", broken)
+    harness.reply_with(route_completion(), streamed_completion("It's ", "two."))
+
+    response = harness.post("/chat/stream", text="What time is it?", session_id="s1")
+
+    name, done = sse_events(response.text)[-1]
+    assert (name, done["reply"]) == ("done", "It's two.")
+    assert done["turn"]["tools"] == []
+    assert done["turn"]["alias"] == "local-main"
 
 
 def test_stream_turn_is_stored_for_the_next_request(harness: ChatHarness) -> None:
@@ -288,7 +397,9 @@ def test_over_budget_announcement_comes_first(harness: ChatHarness, path: str) -
     else:
         events = sse_events(response.text)
         assert events[0] == ("token", {"text": message + " "})
-        assert events[-1] == ("done", {"reply": expected, "session_id": "s1"})
+        name, done = events[-1]
+        assert (name, done["reply"]) == ("done", expected)
+        assert done["turn"]["reason"] == "complex; budget refused"
     assert harness.proxy.body(1)["model"] == "local-main"
 
 

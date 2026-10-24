@@ -17,6 +17,7 @@ from typing import Any, Literal, Protocol
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.run.agent import (
     RunCompletedEvent,
@@ -192,10 +193,15 @@ class Token:
 
 @dataclass(frozen=True)
 class Done:
-    """The stream finished; `reply` is the whole reply, announcement included."""
+    """The stream finished; `reply` is the whole reply, announcement included.
+
+    `tools` names the tool calls the final run made, `metrics` its token counts (if any).
+    """
 
     reply: str
     route: Route
+    tools: tuple[str, ...] = ()
+    metrics: RunMetrics | None = None
 
 
 @dataclass(frozen=True)
@@ -544,7 +550,10 @@ class Router:
         reply = attempt.reply()
         if not attempt.sent and reply:  # still held back: the marker, or a very short reply
             yield Token(reply)
-        yield Done(_with_announcement(announcement, reply), route)
+        run = await attempt.stored_run()
+        tools = tuple(t.tool_name for t in (run.tools if run else None) or [] if t.tool_name)
+        metrics = run.metrics if run is not None and run.metrics is not None else attempt.metrics
+        yield Done(_with_announcement(announcement, reply), route, tools, metrics)
 
 
 class _StreamAttempt:
@@ -555,10 +564,12 @@ class _StreamAttempt:
         self.sent = False
         self.parts: list[str] = []
         self.completed: str | None = None
+        self.metrics: RunMetrics | None = None
         self.failed = False
         self.run_id: str | None = None
         self.session_id: str | None = None
         self.agent: Agent | None = None
+        self._stored: RunOutput | None = None
 
     async def run(
         self, router: Router, route: Route, choice: ModelChoice, text: str, ctx: RequestContext
@@ -591,18 +602,34 @@ class _StreamAttempt:
                     )
                     self.failed = True
                     return
-                elif isinstance(event, RunCompletedEvent) and isinstance(event.content, str):
-                    # The completed run's content is authoritative (deltas may skip tool output).
-                    self.completed = event.content
+                elif isinstance(event, RunCompletedEvent):
+                    self.metrics = event.metrics
+                    if isinstance(event.content, str):
+                        # The completed run's content is authoritative (deltas may skip tool
+                        # output).
+                        self.completed = event.content
         except Exception:
             logger.exception("stream run failed (session %s)", ctx.session_id)
             self.failed = True
 
+    async def stored_run(self) -> RunOutput | None:
+        """The finished run as stored: stream events miss its tool calls.
+
+        None if it can't be read. By then the reply may already have reached the user, and the
+        stored run only adds metadata, so a storage error mustn't fail the stream.
+        """
+        if self._stored is None and self.agent is not None and self.run_id is not None:
+            try:
+                run = await self.agent.aget_run_output(self.run_id, session_id=self.session_id)
+            except Exception:
+                logger.warning("couldn't read stored run %s", self.run_id, exc_info=True)
+                return None
+            self._stored = run if isinstance(run, RunOutput) else None
+        return self._stored
+
     async def needs_fallback(self) -> bool:
         """`_needs_fallback` on the stored run (stream events miss invalid tool calls)."""
-        run = None
-        if self.agent is not None and self.run_id is not None:
-            run = await self.agent.aget_run_output(self.run_id, session_id=self.session_id)
+        run = await self.stored_run()
         if run is None:  # can't check its tools: only a bare marker counts
             return _is_marker(self.held)
         return _needs_fallback(run)

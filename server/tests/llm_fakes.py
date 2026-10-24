@@ -47,11 +47,29 @@ def _sse_response(events: list[str]) -> httpx.Response:
     )
 
 
-def streamed_completion(*deltas: str) -> httpx.Response:
-    """A streamed (SSE) chat completion sending `deltas` as separate content chunks."""
+def streamed_completion(*deltas: str, usage: tuple[int, int] | None = None) -> httpx.Response:
+    """A streamed (SSE) chat completion sending `deltas` as separate content chunks.
+
+    `usage` (prompt tokens, completion tokens) adds the final usage chunk the proxy sends.
+    """
     events = [_chunk({"role": "assistant", "content": ""})]
     events += [_chunk({"content": d}) for d in deltas]
     events += [_chunk({}, "stop")]
+    if usage is not None:
+        prompt, output = usage
+        body = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "local-main",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": prompt,
+                "completion_tokens": output,
+                "total_tokens": prompt + output,
+            },
+        }
+        events.append(f"data: {json.dumps(body)}\n\n")
     return _sse_response(events)
 
 

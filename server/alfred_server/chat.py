@@ -3,15 +3,18 @@
 Both send the request through the router (docs/decisions/0009-router.md), which picks a
 specialist and a model, with a `RequestContext` for the request. Turns sharing a `session_id`
 share history, stored by Agno in Postgres. The stream is Server-Sent Events: `token` events
-with each text delta, then one `done` event with the whole reply (or an `error` event).
+with each text delta, then one `done` event with the whole reply and a `turn` summary of how
+it ran (specialist, model, why, tools, cost), or an `error` event. The web chat page
+(`alfred_server/ui`, docs/decisions/0011-text-chat-ui.md) shows that summary per turn.
 See docs/decisions/0007-agent-runtime.md.
 """
 
+import asyncio
 import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
 from agno.db.base import AsyncBaseDb
 from agno.models.base import Model
@@ -32,6 +35,7 @@ from alfred_server.agents.router import (
     Token,
 )
 from alfred_server.agents.storage import StorageUnavailableError, check_agent_db, get_agent_db
+from alfred_server.budget.models import CostEstimate
 from alfred_server.budget.service import get_budget_service
 from alfred_server.config import Settings, get_settings
 from alfred_server.models.gateway import (
@@ -93,7 +97,15 @@ def model_factory_dependency(
     return factory
 
 
-def budget_dependency() -> BudgetGate:
+class ChatBudget(BudgetGate, Protocol):
+    """The router's budget gate, plus pricing for the cost shown with each streamed turn."""
+
+    def estimate_cost(
+        self, alias: ModelAlias, prompt_tokens: int, expected_output_tokens: int
+    ) -> CostEstimate: ...
+
+
+def budget_dependency() -> ChatBudget:
     """The budget service the router asks before any cloud call. Overridden in tests."""
     return get_budget_service()
 
@@ -101,7 +113,7 @@ def budget_dependency() -> BudgetGate:
 def router_dependency(
     db: Annotated[AsyncBaseDb, Depends(ready_agent_db)],
     model_factory: Annotated[ModelFactory, Depends(model_factory_dependency)],
-    budget: Annotated[BudgetGate, Depends(budget_dependency)],
+    budget: Annotated[ChatBudget, Depends(budget_dependency)],
 ) -> Router:
     return Router(get_registry(), budget, model_factory, db)
 
@@ -147,17 +159,18 @@ async def chat_stream(
     body: ChatRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     agent_router: Annotated[Router, Depends(router_dependency)],
+    budget: Annotated[ChatBudget, Depends(budget_dependency)],
 ) -> StreamingResponse:
     route, ctx = await _route(body, settings, agent_router)
     return StreamingResponse(
-        _sse_events(agent_router, route, body.text, ctx),
+        _sse_events(agent_router, budget, route, body.text, ctx),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 async def _sse_events(
-    agent_router: Router, route: Route, text: str, ctx: RequestContext
+    agent_router: Router, budget: ChatBudget, route: Route, text: str, ctx: RequestContext
 ) -> AsyncIterator[str]:
     session_id = ctx.session_id
     failed = _sse("error", {"message": "The agent run failed", "session_id": session_id})
@@ -166,7 +179,8 @@ async def _sse_events(
             if isinstance(item, Token):
                 yield _sse("token", {"text": item.text})
             elif isinstance(item, Done):
-                yield _sse("done", {"reply": item.reply, "session_id": session_id})
+                turn = await _turn_info(item, budget)
+                yield _sse("done", {"reply": item.reply, "session_id": session_id, "turn": turn})
             elif isinstance(item, Failed):
                 yield failed
     except Exception:
@@ -174,5 +188,34 @@ async def _sse_events(
         yield failed
 
 
-def _sse(event: str, data: dict[str, str]) -> str:
+async def _turn_info(done: Done, budget: ChatBudget) -> dict[str, Any]:
+    """How the turn ran, for the web chat: the routing decision, tool calls and cost.
+
+    Cost is `None` on local models, and on cloud when it can't be priced. It's the proxy's
+    price for the run's tokens, so close to (not exactly) what LiteLLM records as spend.
+    """
+    choice = done.route.choice
+    metrics = done.metrics
+    input_tokens = metrics.input_tokens if metrics else 0
+    output_tokens = metrics.output_tokens if metrics else 0
+    cost_gbp: float | None = None
+    if choice.tier == "cloud":
+        try:
+            estimate = await asyncio.to_thread(
+                budget.estimate_cost, choice.alias, input_tokens, output_tokens
+            )
+            cost_gbp = round(estimate.gbp, 6)
+        except Exception:
+            logger.warning("couldn't price the turn on %s", choice.alias, exc_info=True)
+    return {
+        **choice.metadata(),
+        "specialist": done.route.specialist.name,
+        "tools": list(done.tools),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_gbp": cost_gbp,
+    }
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"

@@ -15,6 +15,23 @@ concurrency:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    services:
+      # Same image as infra/docker-compose.yml, for the Postgres smoke test (tests/test_db.py).
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: alfred
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: alfred
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alfred -d alfred"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://alfred:ci-only@127.0.0.1:5432/alfred
     defaults:
       run:
         working-directory: server

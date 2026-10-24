@@ -8,7 +8,7 @@ documented commands. Document new variables in `infra/.env.example`.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    # SQLAlchemy URL (psycopg 3 driver) for the compose Postgres. Secret because it
+    # normally embeds the password; read it with `.get_secret_value()`.
+    database_url: SecretStr = SecretStr("postgresql+psycopg://alfred@127.0.0.1:5432/alfred")
+    ollama_base_url: str = "http://127.0.0.1:11434"
 
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.

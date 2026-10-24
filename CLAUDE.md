@@ -20,10 +20,11 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/alfred_server/voice/stt.py` | Speech-to-text: `SpeechToText` protocol, `Transcript`, `FasterWhisperSTT`, shared `get_stt()`. The app's lifespan loads it when `ALFRED_STT_ENABLED=true`. Model choice and benchmarks in `docs/decisions/0002-stt.md`. |
 | `server/scripts/bench_stt.py` | STT benchmark (latency, real-time factor, VRAM) over the WAV fixtures. |
 | `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
+| `server/alfred_server/db.py` | `check_database()`; `python -m alfred_server.db` checks `ALFRED_DATABASE_URL` is reachable. |
 | `android/` | Android app (Kotlin + Compose). Placeholder until STU-51. |
-| `infra/` | `docker-compose.yml` (services added from STU-48) and `.env.example`. |
+| `infra/` | `docker-compose.yml` (Postgres + pgvector, GPU Ollama), `.env.example`, `scripts/` (`pull-models.sh`, `check-models.sh`), `certs/` (git-ignored local CAs). See `docs/infra.md`. |
 | `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
-| `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy (package and tests), pytest on every PR and push to `main`. |
+| `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy (package and tests), pytest on every PR and push to `main`. Starts a pgvector Postgres service and sets `TEST_DATABASE_URL` so the `tests/test_db.py` smoke test runs. |
 
 ### Server commands (run in `server/`)
 
@@ -37,9 +38,20 @@ uv run python -m alfred_server            # run the server using ALFRED_* settin
 uv run pytest -m "not model"              # skip tests that download/load real speech models
 uv sync --extra cuda                      # + cuBLAS/cuDNN wheels for GPU STT (the 3090 box; not in CI)
 uv run python scripts/bench_stt.py --device cuda   # STT benchmark
+uv run python -m alfred_server.db         # check the server can reach Postgres
 ```
 
+`tests/test_db.py` has a Postgres smoke test that only runs when `TEST_DATABASE_URL` is set (CI sets it with a Postgres service; locally point it at the compose stack).
+
 Tests marked `model` load a real model (`tiny.en` on CPU by default, downloaded once to the Hugging Face cache). Run them against the production model with `STT_TEST_MODEL=distil-large-v3 STT_TEST_DEVICE=cuda uv run pytest -m model`.
+
+### Infra commands (see `docs/infra.md`)
+
+```bash
+cd infra && docker compose up -d          # Postgres + Ollama (needs infra/.env)
+infra/scripts/pull-models.sh              # pull OLLAMA_MODELS_ROUTER/MAIN (from repo root)
+infra/scripts/check-models.sh             # prompt each model, show VRAM use
+```
 
 `uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`.
 
@@ -53,7 +65,8 @@ On a machine whose HTTPS traffic is intercepted (uv fails with `invalid peer cer
 - Add new settings as typed fields on `Settings`; get them via `get_settings()` (FastAPI: `Depends(get_settings)`), never `os.environ` directly.
 - `get_settings()` is `lru_cache`d. In tests, build `Settings(_env_file=None)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test.
 - `ALFRED_HOST` defaults to `127.0.0.1`. Listening on all interfaces (`0.0.0.0`) must be set explicitly (e.g. in compose).
-- Document every new variable in `infra/.env.example`, with no real values.
+- Document every new variable in `infra/.env.example`, with no real values. The same file is copied to `infra/.env` (compose) and `server/.env` (server).
+- Secrets in `Settings` are `SecretStr` (e.g. `database_url`); read them with `.get_secret_value()` only where they're used.
 
 ### Conventions
 

@@ -16,10 +16,11 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/` | Python 3.12 package `alfred_server` (FastAPI + Agno), managed with `uv`. Tests in `server/tests/`. |
 | `server/alfred_server/main.py` | FastAPI app (`app`), built by `create_app()`. `GET /health` → `{"status":"ok"}`. |
 | `server/alfred_server/config.py` | `Settings` (pydantic-settings) and `get_settings()`. |
+| `server/alfred_server/__main__.py` | `python -m alfred_server`: runs uvicorn with host/port/log level from `Settings`. |
 | `android/` | Android app (Kotlin + Compose). Placeholder until STU-51. |
 | `infra/` | `docker-compose.yml` (services added from STU-48) and `.env.example`. |
 | `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
-| `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy, pytest on every PR and push to `main`. |
+| `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy (package and tests), pytest on every PR and push to `main`. |
 
 ### Server commands (run in `server/`)
 
@@ -28,9 +29,11 @@ uv sync                                   # install deps incl. dev group
 uv run pytest                             # unit tests
 uv run ruff check                         # lint (add --fix to autofix)
 uv run ruff format                        # format (CI runs --check)
-uv run mypy alfred_server                 # type check (lenient for now)
-uv run uvicorn alfred_server.main:app     # run locally on :8000
+uv run mypy alfred_server tests           # type check (lenient for now, pydantic plugin on)
+uv run python -m alfred_server            # run the server using ALFRED_* settings (default 127.0.0.1:8000)
 ```
+
+`uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`.
 
 CI runs `uv sync --locked`, so after changing dependencies run `uv lock` (or `uv add <pkg>`) and commit `server/uv.lock`.
 
@@ -38,8 +41,10 @@ On a machine whose HTTPS traffic is intercepted (uv fails with `invalid peer cer
 
 ### Configuration
 
-- All server config is read from environment variables by `alfred_server.config.Settings`, prefixed `ALFRED_` (e.g. `ALFRED_LOG_LEVEL`). A `.env` in the working directory is also read.
+- All server config is read from environment variables by `alfred_server.config.Settings`, prefixed `ALFRED_` (e.g. `ALFRED_LOG_LEVEL`). The server also reads `server/.env` (its working directory with the commands above): for local runs, `cp infra/.env.example server/.env`.
 - Add new settings as typed fields on `Settings`; get them via `get_settings()` (FastAPI: `Depends(get_settings)`), never `os.environ` directly.
+- `get_settings()` is `lru_cache`d. In tests, build `Settings(_env_file=None)` directly or call `get_settings.cache_clear()`; the autouse fixture in `server/tests/conftest.py` clears every `ALFRED_*` var and the cache around each test.
+- `ALFRED_HOST` defaults to `127.0.0.1`. Listening on all interfaces (`0.0.0.0`) must be set explicitly (e.g. in compose).
 - Document every new variable in `infra/.env.example`, with no real values.
 
 ### Conventions

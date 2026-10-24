@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "Proprietary" }
 dependencies = [
-    "agno>=1.7",
+    "agno>=3.1,<4",
     "fastapi>=0.115",
     "pydantic-settings>=2.6",
     "uvicorn[standard]>=0.32",
@@ -40,6 +40,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 
 [tool.mypy]
 python_version = "3.12"
+plugins = ["pydantic.mypy"]
 # Lenient for now: tighten per module as the code base grows.
 ignore_missing_imports = true
 check_untyped_defs = true

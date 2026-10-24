@@ -4,15 +4,12 @@ from pydantic import ValidationError
 from alfred_server.config import Settings
 
 
-def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("ALFRED_ENV", "ALFRED_LOG_LEVEL", "ALFRED_HOST", "ALFRED_PORT"):
-        monkeypatch.delenv(var, raising=False)
-
+def test_defaults() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.env == "dev"
-    assert settings.log_level == "INFO"
+    assert settings.host == "127.0.0.1"
     assert settings.port == 8000
+    assert settings.log_level == "INFO"
 
 
 def test_reads_prefixed_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,7 +23,7 @@ def test_reads_prefixed_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_rejects_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ALFRED_ENV", "staging")
+    monkeypatch.setenv("ALFRED_LOG_LEVEL", "LOUD")
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)

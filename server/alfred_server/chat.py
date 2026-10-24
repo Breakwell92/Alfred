@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from agno.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb
 from agno.models.base import Model
 from agno.run.agent import RunCompletedEvent, RunContentEvent, RunErrorEvent
 from agno.run.base import RunStatus
@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from alfred_server.agents.context import DeviceType, RequestContext
+from alfred_server.agents.context import ID_PATTERN, DeviceType, RequestContext
 from alfred_server.agents.echo import build_echo_agent
 from alfred_server.agents.storage import get_agent_db
 from alfred_server.config import Settings, get_settings
@@ -35,8 +35,9 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     # Omit to start a new conversation; the response carries the id to send next time.
-    session_id: str | None = Field(default=None, min_length=1, max_length=128)
-    device_id: str | None = Field(default=None, max_length=128)
+    # Ids go into the system prompt, so only a safe character set (no newlines or markup).
+    session_id: str | None = Field(default=None, max_length=128, pattern=ID_PATTERN)
+    device_id: str | None = Field(default=None, max_length=128, pattern=ID_PATTERN)
     device_type: DeviceType = "text"
 
 
@@ -45,7 +46,7 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
-def agent_db_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> BaseDb:
+def agent_db_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> AsyncBaseDb:
     """Agno storage for sessions. Overridden in tests."""
     return get_agent_db(settings)
 
@@ -56,7 +57,7 @@ def chat_model_dependency() -> Model | None:
 
 
 def _build_agent(
-    body: ChatRequest, settings: Settings, db: BaseDb, model: Model | None
+    body: ChatRequest, settings: Settings, db: AsyncBaseDb, model: Model | None
 ) -> tuple[Agent, str]:
     session_id = body.session_id or str(uuid.uuid4())
     ctx = RequestContext.build(
@@ -76,11 +77,17 @@ def _build_agent(
 async def chat(
     body: ChatRequest,
     settings: Annotated[Settings, Depends(get_settings)],
-    db: Annotated[BaseDb, Depends(agent_db_dependency)],
+    db: Annotated[AsyncBaseDb, Depends(agent_db_dependency)],
     model: Annotated[Model | None, Depends(chat_model_dependency)],
 ) -> ChatResponse:
     agent, session_id = _build_agent(body, settings, db, model)
-    run = await agent.arun(body.text, session_id=session_id)
+    # Agno reports model and storage failures (e.g. Postgres down) as an errored run; the
+    # except is a backstop for anything it lets escape.
+    try:
+        run = await agent.arun(body.text, session_id=session_id)
+    except Exception as exc:
+        logger.exception("chat run failed (session %s)", session_id)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The agent run failed") from exc
     if run.status == RunStatus.error or not isinstance(run.content, str):
         logger.error("chat run failed (session %s): %s", session_id, run.content)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The agent run failed")
@@ -91,7 +98,7 @@ async def chat(
 async def chat_stream(
     body: ChatRequest,
     settings: Annotated[Settings, Depends(get_settings)],
-    db: Annotated[BaseDb, Depends(agent_db_dependency)],
+    db: Annotated[AsyncBaseDb, Depends(agent_db_dependency)],
     model: Annotated[Model | None, Depends(chat_model_dependency)],
 ) -> StreamingResponse:
     agent, session_id = _build_agent(body, settings, db, model)

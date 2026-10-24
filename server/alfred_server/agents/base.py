@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from agno.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.base import Model
 
 from alfred_server.agents.context import RequestContext
@@ -34,7 +34,7 @@ def build_agent(
     *,
     ctx: RequestContext,
     alias: ModelAlias,
-    db: BaseDb,
+    db: BaseDb | AsyncBaseDb,
     instructions: Sequence[str] = (),
     tools: Sequence[Callable[..., Any]] = (),
     settings: Settings | None = None,

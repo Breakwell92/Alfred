@@ -1,18 +1,21 @@
+import asyncio
 import os
 import re
 import uuid
 from typing import Any
 
 import agno.tracing
+import opentelemetry.trace
 import pytest
 from agno.db.in_memory import InMemoryDb
-from agno.db.postgres import PostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from fastapi.testclient import TestClient
 
+from alfred_server.agents import storage
 from alfred_server.agents.base import BASE_INSTRUCTIONS, build_agent
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.echo import build_echo_agent, make_get_time
-from alfred_server.agents.storage import AGNO_SCHEMA, get_agent_db
+from alfred_server.agents.storage import AGNO_SCHEMA, CONNECT_TIMEOUT_S, get_agent_db
 from alfred_server.config import Settings
 from alfred_server.main import create_app
 from alfred_server.models.gateway import GatewayNotConfiguredError, gateway_model
@@ -86,14 +89,25 @@ def test_get_time_reports_local_time() -> None:
     assert re.fullmatch(r"\d\d:\d\d on \w+day \d{1,2} \w+ \d{4} \(Europe/London\)", result)
 
 
-def test_agent_db_is_shared_and_uses_agno_schema() -> None:
-    settings = Settings(_env_file=None, database_url="postgresql+psycopg://u:p@db:5432/x")
+def test_agent_db_is_async_shared_and_uses_agno_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine_calls: list[tuple[str, dict[str, Any]]] = []
+    real_engine = storage.create_async_postgres_engine
+
+    def recording_engine(url: str, **kwargs: Any) -> Any:
+        engine_calls.append((url, kwargs))
+        return real_engine(url, **kwargs)
+
+    monkeypatch.setattr(storage, "create_async_postgres_engine", recording_engine)
+    url = "postgresql+psycopg://u:p@db:5432/agent-db-test"
+    settings = Settings(_env_file=None, database_url=url)
 
     db = get_agent_db(settings)
 
-    assert isinstance(db, PostgresDb)
+    # Async, so agent.arun() awaits storage instead of blocking the event loop.
+    assert isinstance(db, AsyncPostgresDb)
     assert db.db_schema == AGNO_SCHEMA
     assert get_agent_db(settings) is db
+    assert engine_calls == [(url, {"connect_args": {"connect_timeout": CONNECT_TIMEOUT_S}})]
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL not set")
@@ -106,18 +120,21 @@ def test_sessions_persist_in_postgres() -> None:
         completion({"role": "assistant", "content": "Your name is Dan."}),
     )
 
-    def run(text: str) -> None:
-        model = gateway_model("local-main", settings=gateway_settings(), http_client=proxy.client())
-        agent = build_echo_agent(ctx(), db=db, model=model)
-        agent.run(text, session_id=session_id)
+    async def conversation() -> None:
+        for text in ("My name is Dan.", "What's my name?"):
+            client = proxy.async_client()
+            model = gateway_model("local-main", settings=gateway_settings(), http_client=client)
+            agent = build_echo_agent(ctx(), db=db, model=model)
+            await agent.arun(text, session_id=session_id)
+        await db.delete_session(session_id)
+        await db.db_engine.dispose()
 
-    run("My name is Dan.")
-    run("What's my name?")
+    # psycopg async needs a selector loop (Windows defaults to Proactor).
+    asyncio.run(conversation(), loop_factory=asyncio.SelectorEventLoop)
 
     second_request = [str(m.get("content")) for m in proxy.body(1)["messages"]]
     assert "My name is Dan." in second_request
     assert "Noted, Dan." in second_request
-    db.delete_session(session_id)
 
 
 @pytest.mark.parametrize("enabled", [True, False])
@@ -127,10 +144,19 @@ def test_lifespan_sets_up_tracing_only_when_enabled(
     monkeypatch.setenv("ALFRED_AGENT_TRACING", str(enabled).lower())
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(agno.tracing, "setup_tracing", lambda **kwargs: calls.append(kwargs))
+    shutdowns: list[bool] = []
+
+    class FakeProvider:
+        def shutdown(self) -> None:
+            shutdowns.append(True)
+
+    monkeypatch.setattr(opentelemetry.trace, "get_tracer_provider", FakeProvider)
 
     with TestClient(create_app()):
-        pass
+        assert len(calls) == int(enabled)
+        assert shutdowns == []
 
-    assert len(calls) == int(enabled)
     if enabled:
         assert calls[0]["db"] is get_agent_db()
+    # Queued spans are flushed when the app shuts down.
+    assert len(shutdowns) == int(enabled)

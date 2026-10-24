@@ -50,6 +50,7 @@ required-environments = [
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",

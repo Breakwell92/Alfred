@@ -36,6 +36,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Process-wide OpenTelemetry provider exporting agent spans to the `agno` schema.
         setup_tracing(db=get_agent_db(), batch_processing=True)
     yield
+    if get_settings().agent_tracing:
+        from opentelemetry import trace
+
+        # Export spans still queued in the batch processor before the process exits.
+        provider = trace.get_tracer_provider()
+        shutdown = getattr(provider, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
 
 
 def tts_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> LocalTTS:

@@ -25,7 +25,7 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
 | `server/alfred_server/models/gateway.py` | `gateway_model(alias, metadata=CallMetadata(...))`: Agno `OpenAILike` model calling the LiteLLM proxy. The only way server code gets an LLM; aliases are `ModelAlias` (`local-router`, `local-main`, `cloud-claude`, `cloud-gpt`, `cloud-gemini`). See `docs/decisions/0005-model-gateway.md`. |
 | `server/alfred_server/budget/` | Budget service: `get_budget_service()` → `BudgetService` with `decide(alias, prompt_tokens, expected_output_tokens, reason)` (or `estimate_cost` + `check`) → `BudgetDecision`, `get_month_to_date_spend()`, `preferred_aliases(task_type)`, `summary()`. Settings (cap, tiers, providers, preferences) persisted in Postgres (`budget_settings`, `budget_months`); spend read from LiteLLM's `LiteLLM_SpendLogs`; prices from the proxy's `/model/info`. Protected routes `GET/PUT /settings/budget`, `GET /spend/summary`. Fails closed. See `docs/decisions/0008-budget-service.md`. |
-| `server/alfred_server/agents/` | Agno agent layer (`docs/decisions/0007-agent-runtime.md`): `base.py` `build_agent(name, ctx=, alias=, db=, instructions=, tools=)` shared factory (gateway model tagged with agent/trigger, history, no markdown, Agno telemetry off); `context.py` `RequestContext` rendered into each agent's system message; `storage.py` `get_agent_db()` (Agno `PostgresDb`, `agno` schema); `echo.py` temporary echo agent with `get_time`. Agents are built per request. |
+| `server/alfred_server/agents/` | Agno agent layer (`docs/decisions/0007-agent-runtime.md`): `base.py` `build_agent(name, ctx=, alias=, db=, instructions=, tools=)` shared factory (gateway model tagged with agent/trigger, history, no markdown, Agno telemetry off); `context.py` `RequestContext` rendered into each agent's system message; `storage.py` `get_agent_db()` (Agno `AsyncPostgresDb`, `agno` schema, 5 s connect timeout); `echo.py` temporary echo agent with `get_time`. Agents are built per request. |
 | `server/alfred_server/chat.py` | `POST /chat` `{text, session_id?, device_id?, device_type?}` → `{reply, session_id}` and `POST /chat/stream` (SSE `token`… then `done` or `error`), protected. Dependencies `agent_db_dependency` / `chat_model_dependency` are overridden in tests. |
 | `server/tests/llm_fakes.py` | `FakeProxy`: mock LiteLLM proxy (canned and streamed completions) for running Agno agents in tests. |
 | `server/alfred_server/db.py` | `check_database()`; `python -m alfred_server.db` checks `ALFRED_DATABASE_URL` is reachable. |
@@ -68,7 +68,7 @@ infra/scripts/pull-models.sh              # pull OLLAMA_MODELS_ROUTER/MAIN (from
 infra/scripts/check-models.sh             # prompt each model, show VRAM use
 ```
 
-`uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`.
+`uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`. On Windows add `--loop asyncio:SelectorEventLoop`: Agno's async Postgres storage (psycopg) can't run on uvicorn's default Windows loop; `python -m alfred_server` sets it for you.
 
 The TTS tests marked `model` skip unless the model files have been downloaded.
 

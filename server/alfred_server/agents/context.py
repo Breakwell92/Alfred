@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, Field, field_validator
 
 DeviceType = Literal["phone", "text", "scheduled"]
+# Ids are written into the system prompt: no whitespace, newlines or markup.
+ID_PATTERN = r"^[A-Za-z0-9._:-]+$"
 
 
 class RequestContext(BaseModel):
@@ -20,8 +22,10 @@ class RequestContext(BaseModel):
     now: datetime = Field(description="Time the request arrived, in the user's timezone.")
     timezone: str = Field(description="User's IANA timezone, e.g. Europe/London.")
     device_type: DeviceType
-    session_id: str = Field(description="Conversation id; turns with the same id share history.")
-    device_id: str | None = None
+    session_id: str = Field(
+        pattern=ID_PATTERN, description="Conversation id; turns with the same id share history."
+    )
+    device_id: str | None = Field(default=None, pattern=ID_PATTERN)
     location: str | None = None
     active_room: str | None = None
     persona_id: str = "default"

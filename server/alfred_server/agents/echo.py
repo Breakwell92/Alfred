@@ -8,7 +8,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from agno.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.base import Model
 
 from alfred_server.agents.base import build_agent
@@ -36,7 +36,7 @@ def make_get_time(timezone: str) -> Callable[[], str]:
 def build_echo_agent(
     ctx: RequestContext,
     *,
-    db: BaseDb,
+    db: BaseDb | AsyncBaseDb,
     settings: Settings | None = None,
     model: Model | None = None,
 ) -> Agent:

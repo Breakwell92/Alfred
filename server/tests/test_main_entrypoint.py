@@ -5,7 +5,13 @@ import pytest
 from alfred_server import __main__ as entrypoint
 
 
-def test_main_runs_uvicorn_with_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("platform", "loop"), [("win32", "asyncio:SelectorEventLoop"), ("linux", "auto")]
+)
+def test_main_runs_uvicorn_with_settings(
+    monkeypatch: pytest.MonkeyPatch, platform: str, loop: str
+) -> None:
+    monkeypatch.setattr(entrypoint.sys, "platform", platform)
     calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     monkeypatch.setattr(entrypoint.uvicorn, "run", lambda *a, **kw: calls.append((a, kw)))
     monkeypatch.setenv("ALFRED_HOST", "0.0.0.0")
@@ -17,6 +23,6 @@ def test_main_runs_uvicorn_with_settings(monkeypatch: pytest.MonkeyPatch) -> Non
     assert calls == [
         (
             ("alfred_server.main:app",),
-            {"host": "0.0.0.0", "port": 9001, "log_level": "warning"},
+            {"host": "0.0.0.0", "port": 9001, "log_level": "warning", "loop": loop},
         )
     ]

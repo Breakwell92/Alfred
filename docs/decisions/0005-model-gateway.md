@@ -34,4 +34,4 @@ Alfred uses local models by default and escalates to Claude, GPT or Gemini only 
 - gpt-oss's reasoning comes back in `reasoning_content`, separate from `content` and `tool_calls` (checked through the proxy), which settles the open question in ADR 0003. Agno keeps it out of the reply.
 - Ollama calls also pass through the proxy: a few ms of overhead per call, in exchange for one place for logging and retries.
 - LiteLLM releases often and the image is large (about 2 GB). Bump `LITELLM_IMAGE_TAG` deliberately: it runs Prisma migrations on the `litellm` database at start.
-- LiteLLM trusts only its own CA bundle (or `SSL_CERT_FILE`), not `infra/certs/`. On a host whose HTTPS is intercepted, cloud calls fail until that is handled (not needed on the server so far).
+- LiteLLM trusts only its own CA bundle (or `SSL_CERT_FILE`), not the system store. `render_config.py` therefore appends the certs in `infra/certs/` to certifi's bundle and sets `SSL_CERT_FILE` (STU-107). The home server needs this because AVG Web Shield intercepts its HTTPS.

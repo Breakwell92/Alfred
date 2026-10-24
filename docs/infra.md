@@ -117,7 +117,7 @@ Costs come from the price table shipped in the pinned image (`LITELLM_LOCAL_MODE
 ## Gotchas
 
 - **Native Ollama on the same machine.** A desktop Ollama install also listens on 11434, and the container then fails to bind (or you talk to the wrong one). Either quit the desktop app (and stop it starting at login) or set `OLLAMA_PORT` (e.g. `11435`) and `ALFRED_OLLAMA_BASE_URL` to match. The native app may also hold VRAM.
-- **Intercepted HTTPS** (antivirus web scanning such as AVG/Avast Web Shield, or a corporate proxy): `ollama pull` fails with `x509: certificate signed by unknown authority`. Put the intercepting root CA as PEM in `infra/certs/` (git-ignored) and recreate the container with `docker compose up -d ollama`. On Windows, export it with PowerShell:
+- **Intercepted HTTPS** (antivirus web scanning such as AVG/Avast Web Shield, or a corporate proxy): `ollama pull` fails with `x509: certificate signed by unknown authority`, and LiteLLM cloud calls fail with `SSLCertVerificationError: unable to get local issuer certificate`. Put the intercepting root CA as PEM in `infra/certs/` (git-ignored) and recreate the containers that use it with `docker compose up -d --force-recreate ollama litellm`. The home server needs this: AVG Web/Mail Shield intercepts its HTTPS. On Windows, export it with PowerShell:
 
   ```powershell
   $c = Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -like '*Web/Mail Shield Root*'
@@ -126,7 +126,7 @@ Costs come from the price table shipped in the pinned image (`LITELLM_LOCAL_MODE
 
   The same interception breaks `uv` (set `UV_SYSTEM_CERTS=1`, see `CLAUDE.md`).
 - **LiteLLM on a new image tag** runs Prisma migrations against the `litellm` database at start (about a minute the first time), so `docker compose ps` shows it `starting` for a while. Its admin UI at `/ui` uses the master key.
-- **LiteLLM and intercepted HTTPS.** LiteLLM ignores `infra/certs/` (it uses its own CA bundle, or `SSL_CERT_FILE`), so on a host with HTTPS interception cloud calls fail with certificate errors. Not handled yet.
+- **LiteLLM and `infra/certs/`.** LiteLLM ignores the system trust store and reads only its own CA bundle or `SSL_CERT_FILE`. So at start `render_config.py` writes certifi's bundle plus every `*.crt` / `*.pem` in `infra/certs/` to `/tmp/alfred-ca-bundle.pem` and points `SSL_CERT_FILE` at it. The log line `render_config: trusting extra CAs: …` lists the files. With no certs there, nothing changes. `docker exec … env` shows the image's default `SSL_CERT_FILE`, not the proxy's: check with `docker compose exec litellm sh -c "tr '\0' '\n' < /proc/1/environ | grep SSL_CERT_FILE"`.
 - **Postgres 18 data layout.** The pg18 image stores data in `/var/lib/postgresql/18/docker`, so the volume is mounted at `/var/lib/postgresql`. A future major upgrade needs `pg_upgrade` or a dump/restore; don't just bump the tag.
 
 ## Environment variables

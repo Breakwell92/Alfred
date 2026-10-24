@@ -118,11 +118,15 @@ services:
       LITELLM_CLOUD_CLAUDE_MODEL: ${LITELLM_CLOUD_CLAUDE_MODEL:-}
       LITELLM_CLOUD_GPT_MODEL: ${LITELLM_CLOUD_GPT_MODEL:-}
       LITELLM_CLOUD_GEMINI_MODEL: ${LITELLM_CLOUD_GEMINI_MODEL:-}
+      # PEM certs in infra/certs/ are added to LiteLLM's CA bundle (hosts whose HTTPS is
+      # intercepted, e.g. by antivirus web scanning). Empty directory = default bundle only.
+      EXTRA_CA_DIR: /usr/local/share/alfred-certs
     ports:
       # Loopback by default; set LITELLM_BIND_ADDRESS to the Tailscale IP to reach it remotely.
       - "${LITELLM_BIND_ADDRESS:-127.0.0.1}:${LITELLM_PORT:-4000}:4000"
     volumes:
       - ./litellm:/etc/litellm:ro
+      - ./certs:/usr/local/share/alfred-certs:ro
     depends_on:
       litellm-db-init:
         condition: service_completed_successfully

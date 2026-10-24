@@ -184,6 +184,8 @@ _preloaded_libraries: set[str] = set()
 
 def _add_windows_dll_dirs(bin_dirs: list[Path]) -> None:
     """Add each directory to the DLL search path (and PATH) once per process."""
+    if sys.platform != "win32":  # also tells mypy add_dll_directory exists below
+        return
     for bin_dir in map(str, bin_dirs):
         if bin_dir in _registered_dll_dirs:
             continue

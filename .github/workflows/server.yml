@@ -29,6 +29,14 @@ jobs:
       - name: Install Python and dependencies
         run: uv sync --locked
 
+      # Speech models used by tests marked `model` (tiny.en, ~75 MB).
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ hashFiles('server/tests/test_stt.py') }}
+          restore-keys: hf-models-
+
       - name: Ruff lint
         run: uv run ruff check
 

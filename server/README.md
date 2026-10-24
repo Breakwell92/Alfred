@@ -8,6 +8,8 @@ uv run python -m alfred_server            # serve on ALFRED_HOST:ALFRED_PORT (de
 uv run pytest                             # tests
 uv run ruff check && uv run ruff format --check
 uv run mypy alfred_server tests
+uv sync --extra cuda                      # GPU speech-to-text (cuBLAS/cuDNN wheels)
+uv run python scripts/bench_stt.py --device cuda
 ```
 
 Configuration comes from `ALFRED_*` environment variables and `server/.env` (start from `cp ../infra/.env.example .env`). See `alfred_server/config.py`.

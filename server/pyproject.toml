@@ -8,8 +8,16 @@ license = { text = "Proprietary" }
 dependencies = [
     "agno>=3.1,<4",
     "fastapi>=0.115",
+    "faster-whisper>=1.2",
+    "numpy>=2.0",
     "pydantic-settings>=2.6",
     "uvicorn[standard]>=0.32",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "nvidia-cublas-cu12>=12.4,<13",
+    "nvidia-cudnn-cu12>=9,<10",
 ]
 
 [dependency-groups]
@@ -30,6 +38,9 @@ packages = ["alfred_server"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "model: loads a real speech model (downloads it on first run); deselect with -m 'not model'",
+]
 
 [tool.ruff]
 line-length = 100

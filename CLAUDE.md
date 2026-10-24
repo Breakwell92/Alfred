@@ -17,6 +17,9 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/alfred_server/main.py` | FastAPI app (`app`), built by `create_app()`. `GET /health` → `{"status":"ok"}`. |
 | `server/alfred_server/config.py` | `Settings` (pydantic-settings) and `get_settings()`. |
 | `server/alfred_server/__main__.py` | `python -m alfred_server`: runs uvicorn with host/port/log level from `Settings`. |
+| `server/alfred_server/voice/stt.py` | Speech-to-text: `SpeechToText` protocol, `Transcript`, `FasterWhisperSTT`, shared `get_stt()`. The app's lifespan loads it when `ALFRED_STT_ENABLED=true`. Model choice and benchmarks in `docs/decisions/0002-stt.md`. |
+| `server/scripts/bench_stt.py` | STT benchmark (latency, real-time factor, VRAM) over the WAV fixtures. |
+| `server/tests/fixtures/audio/` | 16 kHz mono 16-bit WAV clips + `transcripts.json` (synthetic voice). |
 | `android/` | Android app (Kotlin + Compose). Placeholder until STU-51. |
 | `infra/` | `docker-compose.yml` (services added from STU-48) and `.env.example`. |
 | `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
@@ -31,7 +34,12 @@ uv run ruff check                         # lint (add --fix to autofix)
 uv run ruff format                        # format (CI runs --check)
 uv run mypy alfred_server tests           # type check (lenient for now, pydantic plugin on)
 uv run python -m alfred_server            # run the server using ALFRED_* settings (default 127.0.0.1:8000)
+uv run pytest -m "not model"              # skip tests that download/load real speech models
+uv sync --extra cuda                      # + cuBLAS/cuDNN wheels for GPU STT (the 3090 box; not in CI)
+uv run python scripts/bench_stt.py --device cuda   # STT benchmark
 ```
+
+Tests marked `model` load a real model (`tiny.en` on CPU by default, downloaded once to the Hugging Face cache). Run them against the production model with `STT_TEST_MODEL=distil-large-v3 STT_TEST_DEVICE=cuda uv run pytest -m model`.
 
 `uv run uvicorn alfred_server.main:app` also works (add `--reload` while developing), but it takes host, port and log level from its own flags and ignores `ALFRED_HOST`/`ALFRED_PORT`/`ALFRED_LOG_LEVEL`.
 

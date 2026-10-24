@@ -58,6 +58,23 @@ class Settings(BaseSettings):
     # Where models are downloaded; None uses the Hugging Face cache.
     stt_download_root: str | None = None
 
+    # Text-to-speech (Kokoro, Piper fallback). See docs/decisions/0006-tts.md.
+    # Off by default so tests and CI never load a model; the voice gateway enables it.
+    tts_enabled: bool = False
+    # Directory holding the model files (scripts/download_tts_models.py fills it).
+    # None uses ~/.cache/alfred/tts.
+    tts_model_dir: str | None = None
+    # Engine of the default voice (Dan picked Piper's en_GB-alan-medium after a listening test).
+    # Kokoro still loads for other voices; Piper is the automatic fallback if it won't.
+    tts_engine: Literal["kokoro", "piper"] = "piper"
+    tts_kokoro_voice: str = "bm_george"
+    tts_kokoro_model: str = "kokoro-v1.0.onnx"
+    tts_kokoro_voices: str = "voices-v1.0.bin"
+    # "auto" uses CUDA when onnxruntime can, else CPU; "cuda" fails (and falls back to Piper)
+    # rather than run Kokoro on the CPU.
+    tts_kokoro_device: Literal["auto", "cuda", "cpu"] = "auto"
+    tts_piper_voice: str = "en_GB-alan-medium"
+
 
 @lru_cache
 def get_settings() -> Settings:

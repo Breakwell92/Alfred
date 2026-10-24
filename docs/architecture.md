@@ -6,7 +6,7 @@ Alfred is a personal, wake-word-activated Android voice assistant. Personal use 
 - **Home server** (RTX 3090 box; services in Docker Compose, see `docs/infra.md`):
   - Postgres (with pgvector) for sessions, memory, schedules, connector registry and logs
   - Ollama serving local models on the GPU (`docs/decisions/0003-local-models.md`)
-  - speech-to-text (`alfred_server/voice/stt.py`, faster-whisper on CUDA; ADR 0002) and text-to-speech
+  - speech-to-text (`alfred_server/voice/stt.py`, faster-whisper on CUDA; ADR 0002) and text-to-speech (`alfred_server/voice/tts.py`, Kokoro on CUDA with Piper on CPU as fallback, streamed sentence by sentence as 24 kHz PCM16; ADR 0006)
   - local LLMs, served through LiteLLM alongside cloud models
   - an Agno agent layer (router plus specialist agents)
   - connectors: Google, Home Assistant, Spotify, Plex, Slack, GitHub, Samsung TVs

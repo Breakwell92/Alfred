@@ -12,6 +12,10 @@ from alfred_server.auth import require_api_token
 from alfred_server.budget.api import router as budget_router
 from alfred_server.chat import router as chat_router
 from alfred_server.config import Settings, get_settings
+from alfred_server.connectors.api import callback_router as connector_callback_router
+from alfred_server.connectors.api import router as connector_router
+from alfred_server.connectors.refresher import TokenRefresher
+from alfred_server.connectors.service import get_connector_service
 
 # Cheap to import: the TTS engines themselves are imported when they load.
 from alfred_server.voice.tts import LocalTTS, get_tts, voices_response
@@ -35,7 +39,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Process-wide OpenTelemetry provider exporting agent spans to the `agno` schema.
         setup_tracing(db=get_agent_db(), batch_processing=True)
+    refresher: TokenRefresher | None = None
+    vault_key = get_settings().vault_key
+    if vault_key is not None and vault_key.get_secret_value():
+        # Renews OAuth tokens before they expire. Without a vault key there are none.
+        refresher = TokenRefresher(
+            get_connector_service(), get_settings().connector_refresh_interval_s
+        )
+        refresher.start()
     yield
+    if refresher is not None:
+        await refresher.stop()
+        # Stop stdio MCP servers and close remote MCP sessions.
+        await get_connector_service().aclose()
     if get_settings().agent_tracing:
         from opentelemetry import trace
 
@@ -85,7 +101,14 @@ def create_app() -> FastAPI:
     protected.include_router(budget_router)
 
     protected.include_router(chat_router)
+
+    # GET /connectors, PUT /connectors/{id}, DELETE /connectors/{id}/auth, GET .../auth/start.
+    protected.include_router(connector_router)
     app.include_router(protected)
+
+    # The only other open route: the OAuth provider redirects the browser here, so it can't
+    # send the API token. It accepts only a one-time state from the protected /auth/start.
+    app.include_router(connector_callback_router)
     return app
 
 

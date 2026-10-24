@@ -24,12 +24,14 @@ class FakeSettingsRepository(initial: AppSettings) : SettingsRepository {
     }
 }
 
-/** Answers with [status]; records every settings value it was asked to check. */
+/** Answers with [status] (or throws [error]); records every settings value it was asked to check. */
 class FakeServerClient(var status: ConnectionStatus = ConnectionStatus.Connected) : ServerClient {
     val checked = mutableListOf<AppSettings>()
+    var error: Exception? = null
 
     override suspend fun checkConnection(settings: AppSettings): ConnectionStatus {
         checked += settings
+        error?.let { throw it }
         return status
     }
 }

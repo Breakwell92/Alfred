@@ -15,6 +15,13 @@ data class AppSettings(
     val apiToken: String,
 )
 
+/**
+ * A token can be sent in an HTTP header only if it is visible ASCII (0x21-0x7E). Pasted or
+ * autocorrected text can bring in smart quotes or non-breaking spaces, which OkHttp rejects.
+ */
+fun isValidApiToken(token: String): Boolean =
+    token.isNotEmpty() && token.all { it.code in 0x21..0x7E }
+
 interface SettingsRepository {
     val settings: Flow<AppSettings>
 

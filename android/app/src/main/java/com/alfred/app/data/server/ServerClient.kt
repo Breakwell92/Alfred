@@ -1,6 +1,7 @@
 package com.alfred.app.data.server
 
 import com.alfred.app.data.settings.AppSettings
+import com.alfred.app.data.settings.isValidApiToken
 import java.io.IOException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,9 @@ sealed interface ConnectionStatus {
     /** The server is up but rejected the token (401). */
     data object Unauthorised : ConnectionStatus
 
+    /** The saved token has characters that can't go in an HTTP header, so it was never sent. */
+    data object InvalidToken : ConnectionStatus
+
     /** No answer, or `/health` not ok: Tailscale off, server down or wrong URL. */
     data class Unreachable(val reason: String) : ConnectionStatus
 
@@ -43,6 +47,8 @@ class OkHttpServerClient(
         if (settings.serverUrl.isBlank() || settings.apiToken.isBlank()) {
             return ConnectionStatus.NotConfigured
         }
+        val token = settings.apiToken.trim()
+        if (!isValidApiToken(token)) return ConnectionStatus.InvalidToken
         val base = settings.serverUrl.trim().toHttpUrlOrNull()
             ?: return ConnectionStatus.Unreachable("Invalid server URL")
 
@@ -52,7 +58,7 @@ class OkHttpServerClient(
                 if (healthCode != 200) {
                     ConnectionStatus.Unreachable("Health check returned $healthCode")
                 } else {
-                    when (val meCode = get(base.withPath("me"), settings.apiToken.trim())) {
+                    when (val meCode = get(base.withPath("me"), token)) {
                         200 -> ConnectionStatus.Connected
                         401 -> ConnectionStatus.Unauthorised
                         else -> ConnectionStatus.ServerError(meCode)

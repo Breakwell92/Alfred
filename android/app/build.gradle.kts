@@ -25,11 +25,6 @@ android {
         }
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -43,6 +38,7 @@ android {
     }
 }
 
+// JDK 21 for both Java and Kotlin compilation (ADR 0002); no separate compileOptions to drift.
 kotlin {
     jvmToolchain(21)
 }

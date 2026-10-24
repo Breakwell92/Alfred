@@ -2,10 +2,14 @@ package com.alfred.app.ui.home
 
 import com.alfred.app.data.server.ConnectionStatus
 import com.alfred.app.data.settings.AppSettings
+import com.alfred.app.data.settings.SettingsRepository
 import com.alfred.app.testing.FakeServerClient
 import com.alfred.app.testing.FakeSettingsRepository
 import com.alfred.app.testing.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import java.io.IOException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -80,5 +84,32 @@ class HomeViewModelTest {
         runCurrent()
 
         assertEquals(2, server.checked.size)
+    }
+
+    @Test
+    fun `a check that throws becomes an error status and polling continues`() =
+        runTest(mainDispatcher.dispatcher) {
+            server.error = IllegalArgumentException("boom")
+            val vm = viewModel()
+            backgroundScope.launch { vm.status.collect {} }
+
+            assertEquals(ConnectionStatus.Unreachable("boom"), vm.status.value)
+
+            server.error = null
+            advanceTimeBy(10_001)
+            assertEquals(ConnectionStatus.Connected, vm.status.value)
+        }
+
+    @Test
+    fun `unreadable settings become an error status`() = runTest(mainDispatcher.dispatcher) {
+        val broken = object : SettingsRepository {
+            override val settings: Flow<AppSettings> = flow { throw IOException("corrupt") }
+
+            override suspend fun save(settings: AppSettings) = Unit
+        }
+        val vm = HomeViewModel(broken, server)
+        backgroundScope.launch { vm.status.collect {} }
+
+        assertEquals(ConnectionStatus.Unreachable("Couldn't read settings: corrupt"), vm.status.value)
     }
 }

@@ -93,6 +93,12 @@ private fun ConnectionStatus.toView(): StatusView = when (this) {
     ConnectionStatus.Connected -> StatusView("Connected", null, Icons.Filled.CheckCircle)
     ConnectionStatus.Unauthorised ->
         StatusView("Unauthorised", "The server rejected the API token.", Icons.Filled.Lock)
+    ConnectionStatus.InvalidToken ->
+        StatusView(
+            "Invalid token",
+            "The API token has characters that can't be sent. Re-enter it in Settings.",
+            Icons.Filled.Lock,
+        )
     ConnectionStatus.NotConfigured ->
         StatusView("Not set up", "Enter the server URL and API token in Settings.", Icons.Filled.Settings)
     is ConnectionStatus.Unreachable ->

@@ -60,7 +60,10 @@ fun SettingsContent(
             value = state.apiToken,
             onValueChange = onApiTokenChange,
             label = { Text("API token") },
-            supportingText = { Text("Same value as ALFRED_API_TOKEN on the server") },
+            supportingText = {
+                Text(state.tokenError ?: "Same value as ALFRED_API_TOKEN on the server")
+            },
+            isError = state.tokenError != null,
             singleLine = true,
             enabled = state.loaded,
             visualTransformation = PasswordVisualTransformation(),

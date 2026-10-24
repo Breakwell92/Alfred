@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -42,6 +44,21 @@ class SettingsViewModelTest {
             repository.settings.first(),
         )
         assertTrue(vm.state.value.saved)
+    }
+
+    @Test
+    fun `token with non-header characters is not saved`() = runTest(mainDispatcher.dispatcher) {
+        val vm = SettingsViewModel(repository)
+        vm.onApiTokenChange("tok’en")
+
+        vm.save()
+
+        assertEquals("", repository.settings.first().apiToken)
+        assertFalse(vm.state.value.saved)
+        assertNotNull(vm.state.value.tokenError)
+
+        vm.onApiTokenChange("token")
+        assertNull(vm.state.value.tokenError)
     }
 
     @Test

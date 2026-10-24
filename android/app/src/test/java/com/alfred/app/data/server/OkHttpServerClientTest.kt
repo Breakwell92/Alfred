@@ -98,6 +98,16 @@ class OkHttpServerClientTest {
     }
 
     @Test
+    fun `token with non-header characters is invalid, not a crash`() = runTest {
+        serve(token = "good")
+
+        for (token in listOf("tok’en", "tok en", "tok\nen", "tok en")) {
+            assertEquals(ConnectionStatus.InvalidToken, client.checkConnection(settings(token)))
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
     fun `invalid url is unreachable`() = runTest {
         val status = client.checkConnection(settings("t", url = "not a url"))
 

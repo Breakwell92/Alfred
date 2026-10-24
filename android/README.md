@@ -36,3 +36,4 @@ The default server URL baked into the app is `alfred.serverUrl` in `gradle.prope
    - **Unauthorised**: wrong token.
    - **Unreachable**: Tailscale is off or the server is down.
    - **Server error** (503): the server has no token configured.
+   - **Invalid token**: the saved token has characters that can't go in an HTTP header (Settings refuses to save such tokens).

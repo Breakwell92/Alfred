@@ -22,7 +22,7 @@ Ticket requested: "$ARGUMENTS"
 1. **Load context**
    - Fetch the ticket from Linear, including its relations and comments.
    - Fetch every ticket blocking it. If any blocker is not **Done** or **QA**, unassign yourself, move the ticket back to **Ready**, and tell me which blocker is outstanding.
-   - If a PR already exists for this ticket, you are resuming: read the PR, its inline review comments and the Linear comments, then continue from there (see "Responding to review feedback" in CLAUDE.md) instead of starting over.
+   - If a PR already exists for this ticket, you are resuming: read the PR, its inline review comments and the Linear comments, then continue from there (see "Responding to review feedback" in CLAUDE.md) instead of starting over. Turn auto-fix on for that PR straight away (same steps as in step 7), since it's per session and the session that opened the PR may be gone.
    - Read CLAUDE.md and the docs it points to that are relevant to this ticket.
 
 2. **Start**
@@ -46,9 +46,10 @@ Ticket requested: "$ARGUMENTS"
 7. **Hand off for review**
    - Rebase on `main`, commit (conventional commits, referencing the ticket key), push, and open a PR titled `STU-xx: <ticket title>` with summary, testing, acceptance-criteria checklist (including any "Needs Dan to verify" items) and follow-ups. Use the REST API (`gh api`) if GraphQL isn't available.
    - Add the `ready-for-review` label to the PR. This is how `/review` agents find it.
-   - **Turn on auto-fix for the PR**, so CI failures and inline review comments get picked up automatically:
+   - **Turn on auto-fix for the PR, always, without asking.** I want it on for every `/ticket` PR, so CI failures, merge conflicts and inline review comments get picked up automatically:
+     - In the Claude desktop app (local session): call `mcp__ccd_pr__get_status` (load the `ccd_pr` tools via ToolSearch if they're deferred). If it doesn't report this PR, bind it with `mcp__ccd_pr__bind_pr` and the PR URL. Then call `mcp__ccd_pr__set_monitor` with `auto_fix: true`, `address_comments: true` and the PR URL. Don't tell me to run `/autofix-pr`: it isn't available in the desktop app.
      - In a cloud session (claude.ai/code, mobile, `claude --cloud`): start watching the PR with auto-fix now, i.e. subscribe to its CI checks and review comments and fix clear issues as they arrive.
-     - In a local session: you can't enable it yourself, so end your summary with "Run `/autofix-pr` on this branch to turn on auto-fix."
+     - Only if neither is possible (e.g. plain CLI): end your summary with "Auto-fix is NOT on: run `/autofix-pr` on this branch."
    - Comment on the Linear ticket with the PR link, a short summary, anything needing my verification, and follow-ups. Move it to **Code Review** (keep it assigned).
    - If you had to stop because something is missing, move it to **Blocked** (keep it assigned) and comment with exactly what's needed instead.
    - **Start the review in its own session.** I ask for this on every ticket: once the ticket is in **Code Review**, in the Claude desktop app call `start_session` (`mcp__ccd_session__start_session`, load it via ToolSearch if it's deferred) with `initiation: "user_asked"`, `context: "fresh"`, `use_worktree: true`, title `Review STU-xx` and prompt `/review STU-xx`. It must run locally (the reviewer token lives on this machine), so never `target: "cloud"`. If the tool isn't available (CLI, cloud) or the app refuses the start, skip this; the scheduled `/review` task picks the PR up from its `ready-for-review` label.

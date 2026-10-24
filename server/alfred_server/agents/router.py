@@ -613,9 +613,17 @@ class _StreamAttempt:
             self.failed = True
 
     async def stored_run(self) -> RunOutput | None:
-        """The finished run as stored: stream events miss its tool calls."""
+        """The finished run as stored: stream events miss its tool calls.
+
+        None if it can't be read. By then the reply may already have reached the user, and the
+        stored run only adds metadata, so a storage error mustn't fail the stream.
+        """
         if self._stored is None and self.agent is not None and self.run_id is not None:
-            run = await self.agent.aget_run_output(self.run_id, session_id=self.session_id)
+            try:
+                run = await self.agent.aget_run_output(self.run_id, session_id=self.session_id)
+            except Exception:
+                logger.warning("couldn't read stored run %s", self.run_id, exc_info=True)
+                return None
             self._stored = run if isinstance(run, RunOutput) else None
         return self._stored
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
 from agno.models.base import Model
 from fastapi.testclient import TestClient
@@ -279,6 +280,45 @@ def test_stream_done_without_a_price_still_finishes(harness: ChatHarness) -> Non
     assert name == "done"
     assert done["turn"]["tier"] == "cloud"
     assert done["turn"]["cost_gbp"] is None
+
+
+def test_stream_done_after_a_cloud_retry_describes_the_retry(harness: ChatHarness) -> None:
+    harness.budget = FakeBudget(["cloud-claude"])
+    harness.reply_with(
+        route_completion(),
+        streamed_completion("<<UN", "SURE>>", usage=(300, 5)),
+        streamed_completion("Cloud ", "answer.", usage=(1000, 200)),
+    )
+
+    response = harness.post("/chat/stream", text="What's 6 times 7?", session_id="s1")
+
+    name, done = sse_events(response.text)[-1]
+    assert (name, done["reply"]) == ("done", "Cloud answer.")
+    turn = done["turn"]
+    assert (turn["alias"], turn["tier"], turn["reason"]) == (
+        "cloud-claude",
+        "cloud",
+        "fallback from local-main",
+    )
+    assert (turn["input_tokens"], turn["output_tokens"]) == (1000, 200)
+    assert turn["cost_gbp"] == pytest.approx(1200 * USD_PER_TOKEN * 0.8)
+
+
+def test_stream_done_survives_an_unreadable_stored_run(
+    harness: ChatHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("storage hiccup")
+
+    monkeypatch.setattr(Agent, "aget_run_output", broken)
+    harness.reply_with(route_completion(), streamed_completion("It's ", "two."))
+
+    response = harness.post("/chat/stream", text="What time is it?", session_id="s1")
+
+    name, done = sse_events(response.text)[-1]
+    assert (name, done["reply"]) == ("done", "It's two.")
+    assert done["turn"]["tools"] == []
+    assert done["turn"]["alias"] == "local-main"
 
 
 def test_stream_turn_is_stored_for_the_next_request(harness: ChatHarness) -> None:

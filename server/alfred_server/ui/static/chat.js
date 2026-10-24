@@ -206,8 +206,13 @@ async function send(text) {
   refreshConfirmations();
 }
 
+// One turn at a time: a second stream on the same session would interleave Agno runs. Enter
+// calls requestSubmit(), which fires even while the Send button is disabled.
+let sending = false;
+
 $("composer").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (sending) return;
   const input = $("message");
   const text = input.value.trim();
   if (!text) return;
@@ -216,10 +221,12 @@ $("composer").addEventListener("submit", async (event) => {
     return;
   }
   input.value = "";
+  sending = true;
   $("send").disabled = true;
   try {
     await send(text);
   } finally {
+    sending = false;
     $("send").disabled = false;
     input.focus();
   }

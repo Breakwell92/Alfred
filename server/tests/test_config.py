@@ -1,7 +1,9 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from alfred_server.config import Settings
+from alfred_server.config import Settings, get_settings
 
 
 def test_defaults() -> None:
@@ -52,3 +54,23 @@ def test_api_token_is_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.api_token is not None
     assert settings.api_token.get_secret_value() == "test-token"
     assert "test-token" not in repr(settings)
+
+
+def test_tests_ignore_dotenv_in_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A developer's server/.env must not leak into tests (see tests/conftest.py).
+    (tmp_path / ".env").write_text("ALFRED_LOG_LEVEL=DEBUG\nALFRED_API_TOKEN=real-token\n")
+    monkeypatch.chdir(tmp_path)
+
+    settings = get_settings()
+
+    assert settings.log_level == "INFO"
+    assert settings.api_token is None
+
+
+def test_explicit_env_file_is_still_read(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("ALFRED_LOG_LEVEL=DEBUG\n")
+
+    assert Settings(_env_file=env_file).log_level == "DEBUG"

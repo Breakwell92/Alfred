@@ -9,7 +9,44 @@ Personal, wake-word-activated Android voice assistant. A thin Android client (wa
 
 ## Project layout
 
-_To be filled in by STU-47 (server/, android/, infra/, docs/), then kept current by every ticket that changes layout, commands or conventions._
+Keep this section current whenever a ticket changes layout, commands or conventions.
+
+| Path | What |
+| --- | --- |
+| `server/` | Python 3.12 package `alfred_server` (FastAPI + Agno), managed with `uv`. Tests in `server/tests/`. |
+| `server/alfred_server/main.py` | FastAPI app (`app`), built by `create_app()`. `GET /health` → `{"status":"ok"}`. |
+| `server/alfred_server/config.py` | `Settings` (pydantic-settings) and `get_settings()`. |
+| `android/` | Android app (Kotlin + Compose). Placeholder until STU-51. |
+| `infra/` | `docker-compose.yml` (services added from STU-48) and `.env.example`. |
+| `docs/` | `architecture.md`, ADRs in `docs/decisions/` (copy `0000-template.md`), plus protocol/connector/infra docs as they are written. |
+| `.github/workflows/server.yml` | CI for `server/`: ruff lint, ruff format check, mypy, pytest on every PR and push to `main`. |
+
+### Server commands (run in `server/`)
+
+```bash
+uv sync                                   # install deps incl. dev group
+uv run pytest                             # unit tests
+uv run ruff check                         # lint (add --fix to autofix)
+uv run ruff format                        # format (CI runs --check)
+uv run mypy alfred_server                 # type check (lenient for now)
+uv run uvicorn alfred_server.main:app     # run locally on :8000
+```
+
+CI runs `uv sync --locked`, so after changing dependencies run `uv lock` (or `uv add <pkg>`) and commit `server/uv.lock`.
+
+On a machine whose HTTPS traffic is intercepted (uv fails with `invalid peer certificate: UnknownIssuer`), set `UV_SYSTEM_CERTS=1`.
+
+### Configuration
+
+- All server config is read from environment variables by `alfred_server.config.Settings`, prefixed `ALFRED_` (e.g. `ALFRED_LOG_LEVEL`). A `.env` in the working directory is also read.
+- Add new settings as typed fields on `Settings`; get them via `get_settings()` (FastAPI: `Depends(get_settings)`), never `os.environ` directly.
+- Document every new variable in `infra/.env.example`, with no real values.
+
+### Conventions
+
+- Python: ruff (line length 100, rules E/F/W/I/B/UP/SIM), type hints on public functions, pytest tests next to every feature.
+- `.editorconfig` sets formatting basics; LF line endings (`.gitattributes`).
+- Licence: private, all rights reserved (`LICENSE`).
 
 ## Working on tickets
 

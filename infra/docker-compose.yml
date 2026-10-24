@@ -1,0 +1,5 @@
+# Alfred home-server stack. Services (Postgres, Ollama, LiteLLM, STT, TTS, server)
+# are added by later tickets, starting with STU-48.
+name: alfred
+
+services: {}

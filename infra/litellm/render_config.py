@@ -13,6 +13,10 @@ Two things LiteLLM's config can't do on its own:
   `requires_env` key itself is removed before LiteLLM sees the file.
 
 Keys stay as `os.environ/VAR` references, so the rendered file holds no secrets.
+
+It also extends TLS trust: PEM certificates in `$EXTRA_CA_DIR` (infra/certs/, for hosts whose
+HTTPS is intercepted) are appended to certifi's bundle and LiteLLM is pointed at the result
+with `SSL_CERT_FILE`. LiteLLM ignores the system trust store, so this is the only way in.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -57,6 +62,41 @@ def render(text: str, env: Mapping[str, str]) -> tuple[dict[str, Any], list[str]
     return config, dropped
 
 
+def build_ca_bundle(cert_dir: Path, base_bundle: Path, dest: Path) -> list[str]:
+    """Write `base_bundle` plus every PEM certificate in `cert_dir` to `dest`.
+
+    Returns the names of the files added. Writes nothing and returns [] when `cert_dir` is
+    missing or holds no certificates, so a host without interception keeps the default bundle.
+    """
+    if not cert_dir.is_dir():
+        return []
+    extras = [
+        path
+        for path in sorted(cert_dir.iterdir())
+        if path.suffix in {".crt", ".pem"}
+        and "-----BEGIN CERTIFICATE-----" in path.read_text(encoding="utf-8", errors="replace")
+    ]
+    if not extras:
+        return []
+    parts = [base_bundle.read_text(encoding="utf-8")]
+    parts += [path.read_text(encoding="utf-8") for path in extras]
+    dest.write_text("\n".join(part.strip() + "\n" for part in parts), encoding="utf-8")
+    return [path.name for path in extras]
+
+
+def _trust_extra_cas() -> None:
+    cert_dir = os.environ.get("EXTRA_CA_DIR")
+    if not cert_dir:
+        return
+    import certifi  # LiteLLM's own dependency; imported here so tests don't need it
+
+    dest = Path("/tmp/alfred-ca-bundle.pem")
+    added = build_ca_bundle(Path(cert_dir), Path(certifi.where()), dest)
+    if added:
+        os.environ["SSL_CERT_FILE"] = str(dest)
+        print(f"render_config: trusting extra CAs: {', '.join(added)}", flush=True)
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 2:
         raise SystemExit("usage: render_config.py SRC DEST [-- command...]")
@@ -69,6 +109,7 @@ def main(argv: list[str]) -> None:
     print(f"render_config: aliases enabled: {names}", flush=True)
     if dropped:
         print(f"render_config: disabled (API key not set): {', '.join(dropped)}", flush=True)
+    _trust_extra_cas()
     if rest and rest[0] == "--":
         rest = rest[1:]
     if rest:

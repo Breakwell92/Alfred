@@ -80,3 +80,37 @@ def test_spend_logging_needs_master_key_and_database() -> None:
 def test_unset_variable_without_default_is_an_error() -> None:
     with pytest.raises(SystemExit, match="MISSING"):
         render_config.expand("model: ${MISSING}", {})
+
+
+PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n"
+
+
+def test_ca_bundle_appends_certs_to_base(tmp_path: Path) -> None:
+    base = tmp_path / "cacert.pem"
+    base.write_text("# base bundle\n" + PEM.replace("fake", "base"), encoding="utf-8")
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    (certs / "local-ca.crt").write_text(PEM, encoding="ascii")
+    (certs / "other.pem").write_text(PEM.replace("fake", "other"), encoding="ascii")
+    (certs / "README.md").write_text("not a cert", encoding="ascii")
+    (certs / "empty.crt").write_text("", encoding="ascii")
+    dest = tmp_path / "bundle.pem"
+
+    added = render_config.build_ca_bundle(certs, base, dest)
+
+    assert added == ["local-ca.crt", "other.pem"]
+    bundle = dest.read_text(encoding="utf-8")
+    assert bundle.index("MIIBbase") < bundle.index("MIIBfake") < bundle.index("MIIBother")
+    assert bundle.count("-----BEGIN CERTIFICATE-----") == 3
+
+
+@pytest.mark.parametrize("make_dir", [False, True])
+def test_ca_bundle_untouched_without_certs(tmp_path: Path, make_dir: bool) -> None:
+    certs = tmp_path / "certs"
+    if make_dir:
+        certs.mkdir()
+        (certs / "README.md").write_text("only docs here", encoding="ascii")
+    dest = tmp_path / "bundle.pem"
+
+    assert render_config.build_ca_bundle(certs, tmp_path / "missing.pem", dest) == []
+    assert not dest.exists()

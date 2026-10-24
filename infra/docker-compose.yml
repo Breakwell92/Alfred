@@ -1,5 +1,65 @@
-# Alfred home-server stack. Services (Postgres, Ollama, LiteLLM, STT, TTS, server)
-# are added by later tickets, starting with STU-48.
+# Alfred home-server stack. Run from infra/: `docker compose up -d` (see docs/infra.md).
+# Compose reads infra/.env (copy infra/.env.example). Later tickets add LiteLLM, STT, TTS
+# and the server itself.
 name: alfred
 
-services: {}
+services:
+  postgres:
+    # pgvector build of the official Postgres image, so Agno memory/knowledge can use
+    # embeddings later.
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alfred}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-alfred}
+    ports:
+      # Loopback only by default: the database holds tokens, memory and logs.
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/<major>/, so mount the parent.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  ollama:
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-0.40.10}
+    restart: unless-stopped
+    environment:
+      # Keep the router and one main model resident together.
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-2}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-16384}
+      # Flash attention + q8 KV cache roughly halve context memory, leaving room for STT/TTS.
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: ${OLLAMA_KV_CACHE_TYPE:-q8_0}
+      # Also trust any PEM certs in infra/certs/ (for hosts whose HTTPS is intercepted,
+      # e.g. by antivirus web scanning). Empty directory = system CAs only.
+      SSL_CERT_DIR: /etc/ssl/certs:/usr/local/share/alfred-certs
+    ports:
+      # Loopback by default; set OLLAMA_BIND_ADDRESS to the Tailscale IP to reach it remotely.
+      - "${OLLAMA_BIND_ADDRESS:-127.0.0.1}:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+      - ./certs:/usr/local/share/alfred-certs:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  ollama-models:

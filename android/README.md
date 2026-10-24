@@ -4,7 +4,7 @@ Thin Kotlin + Jetpack Compose client for the Alfred home server. Today it has na
 
 ## Stack
 
-Single activity, Compose navigation and Material 3, ViewModels with coroutines/Flow, Koin for DI, OkHttp for HTTP (and WebSocket later), Preferences DataStore for settings. minSdk 29, target/compile SDK 37, JDK 21. Why these: `docs/decisions/0003-android-client-stack.md`.
+Single activity, Compose navigation and Material 3, ViewModels with coroutines/Flow, Koin for DI, OkHttp for HTTP (and WebSocket later), Preferences DataStore for settings. minSdk 29, target/compile SDK 37, JDK 21. Why these: `docs/decisions/0004-android-client-stack.md`.
 
 | Path (under `app/src/main/java/com/alfred/app/`) | What |
 | --- | --- |

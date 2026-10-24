@@ -32,7 +32,7 @@ val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(na
 
 /**
  * Settings in Preferences DataStore (app-private storage). The token is stored unencrypted:
- * fine for a personal, sideloaded app; see docs/decisions/0003-android-client-stack.md.
+ * fine for a personal, sideloaded app; see docs/decisions/0004-android-client-stack.md.
  */
 class DataStoreSettingsRepository(
     private val dataStore: DataStore<Preferences>,

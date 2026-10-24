@@ -3,7 +3,9 @@
 Alfred is a personal, wake-word-activated Android voice assistant. Personal use only.
 
 - **Android client (thin):** wake word, audio capture and playback, phone actions (SMS, alarms, torch, …).
-- **Home server** (Linux box with an RTX 3090):
+- **Home server** (RTX 3090 box; services in Docker Compose, see `docs/infra.md`):
+  - Postgres (with pgvector) for sessions, memory, schedules, connector registry and logs
+  - Ollama serving local models on the GPU (`docs/decisions/0003-local-models.md`)
   - speech-to-text (`alfred_server/voice/stt.py`, faster-whisper on CUDA; ADR 0002) and text-to-speech
   - local LLMs, served through LiteLLM alongside cloud models
   - an Agno agent layer (router plus specialist agents)
@@ -13,7 +15,7 @@ Alfred is a personal, wake-word-activated Android voice assistant. Personal use 
 
 The client and server talk over a WebSocket (see `docs/protocol.md` once it exists), reached over Tailscale (no exposed ports).
 
-**Auth:** the app sends a shared bearer token (`ALFRED_API_TOKEN`) on every request; the server requires it on every route except `GET /health`, and refuses everything (503) when no token is configured. The app shows connection status by polling `/health` and the authenticated `/me`. See `docs/decisions/0003-android-client-stack.md`.
+**Auth:** the app sends a shared bearer token (`ALFRED_API_TOKEN`) on every request; the server requires it on every route except `GET /health`, and refuses everything (503) when no token is configured. The app shows connection status by polling `/health` and the authenticated `/me`. See `docs/decisions/0004-android-client-stack.md`.
 
 ## Repository layout
 

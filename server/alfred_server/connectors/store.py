@@ -172,11 +172,6 @@ class ConnectorStore:
                 self._upsert(connector_credentials, {"connector_id": connector_id}, values)
             )
 
-    def connectors_with_credentials(self) -> set[str]:
-        self._ensure_tables()
-        with self.engine.connect() as conn:
-            return set(conn.execute(select(connector_credentials.c.connector_id)).scalars())
-
     # --- Tokens -----------------------------------------------------------------------------
 
     def tokens(self, connector_id: str) -> TokenRow | None:
@@ -188,12 +183,6 @@ class ConnectorStore:
                 )
             ).first()
         return None if row is None else TokenRow(row.ciphertext, _aware(row.expires_at))
-
-    def all_tokens(self) -> dict[str, TokenRow]:
-        self._ensure_tables()
-        with self.engine.connect() as conn:
-            rows = conn.execute(select(connector_tokens)).all()
-        return {r.connector_id: TokenRow(r.ciphertext, _aware(r.expires_at)) for r in rows}
 
     def set_tokens(self, connector_id: str, ciphertext: str, expires_at: datetime | None) -> None:
         self._ensure_tables()

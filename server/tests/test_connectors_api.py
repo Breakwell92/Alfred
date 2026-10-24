@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
+from alfred_server.connectors import service as connector_service
 from alfred_server.connectors.service import ConnectorService, get_connector_service
 from alfred_server.main import create_app
 from tests.connector_helpers import FakeProvider, make_service
@@ -164,3 +165,55 @@ def test_callback_provider_error_consumes_state(
     assert denied.status_code == 400
     assert "<b>" not in denied.text  # escaped
     assert client.get(f"/connectors/acme/auth/callback?code=x&state={state}").status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("error", "shown"),
+    [
+        ("access_denied", "The provider said: access_denied."),
+        ("Call 0800 123 456 to verify your account", "complete the sign-in"),
+        ("<b>access_denied</b>", "complete the sign-in"),
+    ],
+)
+def test_callback_echoes_only_error_codes(client: TestClient, error: str, shown: str) -> None:
+    response = client.get("/connectors/acme/auth/callback", params={"error": error, "state": "s"})
+
+    assert response.status_code == 400
+    assert shown in response.text
+    if error != "access_denied":
+        assert error not in response.text
+
+
+class FakeMcp:
+    closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def test_shutdown_closes_mcp_sessions_without_vault_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No-secret connectors can be stdio MCP servers: they're stopped at shutdown too."""
+    service = make_service(key=None)
+    fake = FakeMcp()
+    service._mcp["demo"] = ("fingerprint", fake)  # type: ignore[assignment]
+    monkeypatch.setattr(connector_service, "build_connector_service", lambda: service)
+    get_connector_service.cache_clear()
+    try:
+        with TestClient(create_app()):
+            assert get_connector_service() is service
+        assert fake.closed
+        assert service._mcp == {}
+    finally:
+        get_connector_service.cache_clear()
+
+
+def test_shutdown_does_not_build_an_unused_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail() -> ConnectorService:
+        raise AssertionError("built at shutdown")
+
+    monkeypatch.setattr(connector_service, "build_connector_service", fail)
+    get_connector_service.cache_clear()
+    with TestClient(create_app()):
+        pass

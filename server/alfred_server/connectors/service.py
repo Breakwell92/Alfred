@@ -160,7 +160,10 @@ class ConnectorService:
             return ("connected" if secrets.get("api_key") else "needs_auth"), None
         if row.status == "needs_reauth":
             return "needs_reauth", row.last_error
-        return ("connected" if tokens is not None else "needs_auth"), None
+        if tokens is None:
+            return "needs_auth", None
+        # Still connected; last_error may note a transient refresh failure being retried.
+        return "connected", row.last_error
 
     def _set_status(self, connector_id: str, status: Status, last_error: str | None = None) -> None:
         row = self.store.state(connector_id)
@@ -354,7 +357,16 @@ class ConnectorService:
                     client_secret=secrets.get("client_secret"),
                     now=self.clock(),
                 )
-            except (OAuthError, VaultError, VaultUnavailableError) as exc:
+            except OAuthError as exc:
+                logger.warning("connector %s: token refresh failed: %s", connector_id, exc)
+                if exc.retryable:
+                    # Network blip or provider outage: the grant may still be fine. Keep the
+                    # status, note the error and let the next refresher tick try again.
+                    self._set_status(connector_id, "connected", str(exc))
+                else:
+                    self._set_status(connector_id, "needs_reauth", str(exc))
+                return False
+            except (VaultError, VaultUnavailableError) as exc:
                 logger.warning("connector %s: token refresh failed: %s", connector_id, exc)
                 self._set_status(connector_id, "needs_reauth", str(exc))
                 return False

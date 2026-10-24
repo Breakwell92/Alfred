@@ -46,12 +46,17 @@ of their own, working connectors.
 - **Refresh.** A background task (`refresher.py`, every `ALFRED_CONNECTOR_REFRESH_INTERVAL_S`,
   only when the vault key is set) refreshes enabled connectors' tokens expiring within
   5 minutes; tools are never built with a token under 60 s from expiry (refreshed on use).
-  A failed refresh sets `needs_reauth` with the error and isn't retried until Dan signs in
-  again. Providers that don't rotate refresh tokens keep the old one.
+  A refresh the provider rejects (HTTP 4xx such as `invalid_grant`, or no refresh token) sets
+  `needs_reauth` with the error and isn't retried until Dan signs in again. A transient
+  failure (network error, 5xx, 429) keeps the connector `connected` with the error in
+  `last_error` and is retried on the next tick; if the token expires meanwhile, nothing loads
+  with it. Providers that don't rotate refresh tokens keep the old one. A malformed
+  `expires_in` means no known expiry.
 - **MCP lifecycle owned by the service.** `load_tools` connects MCP toolkits itself and caches
   them per connector, so Agno doesn't close them after each run: stdio servers keep running
   between requests. They're restarted when credentials change or the session dies, closed when
-  the connector stops being usable (on the next load for its specialist) and on shutdown.
+  the connector stops being usable (on the next load for its specialist) and on shutdown
+  (whether or not a vault key is set).
   Agno's `MCPTools` needs `fastmcp` 4.x and `mcp` 2.x.
 - **Sync store and OAuth HTTP, async `load_tools`.** Like the budget service, the store uses a
   sync SQLAlchemy engine called from FastAPI's threadpool; `load_tools` runs those calls in a

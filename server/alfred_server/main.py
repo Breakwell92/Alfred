@@ -50,7 +50,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
     if refresher is not None:
         await refresher.stop()
-        # Stop stdio MCP servers and close remote MCP sessions.
+    if get_connector_service.cache_info().currsize:
+        # Stop stdio MCP servers and close remote MCP sessions (also for connectors that need
+        # no vault key). Skipped if the service was never built, so shutdown makes no engine.
         await get_connector_service().aclose()
     if get_settings().agent_tracing:
         from opentelemetry import trace

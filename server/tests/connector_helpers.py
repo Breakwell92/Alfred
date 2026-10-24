@@ -132,6 +132,9 @@ class FakeProvider:
         self.requests: list[dict[str, str]] = []
         self.issued = 0
         self.fail_with: int | None = None
+        self.unreachable = False
+        # Extra/overridden fields in successful token responses.
+        self.extra: dict[str, Any] = {}
         self.rotate_refresh_token = True
         self.expires_in = 3600
 
@@ -139,6 +142,8 @@ class FakeProvider:
         assert str(request.url) == TOKEN_URL
         form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
         self.requests.append(form)
+        if self.unreachable:
+            raise httpx.ConnectError("connection refused", request=request)
         if self.fail_with is not None:
             return httpx.Response(self.fail_with, json={"error": "invalid_grant"})
         self.issued += 1
@@ -149,6 +154,7 @@ class FakeProvider:
         }
         if form["grant_type"] == "authorization_code" or self.rotate_refresh_token:
             body["refresh_token"] = f"refresh-{self.issued}"
+        body.update(self.extra)
         return httpx.Response(200, content=json.dumps(body))
 
     @property

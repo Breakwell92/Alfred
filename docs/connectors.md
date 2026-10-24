@@ -142,8 +142,9 @@ Setting it up:
 3. `GET /connectors/<id>/auth/start` (with the API token) returns `{"url": ...}`. Open it in a
    browser and sign in. The provider redirects to the callback, which stores the tokens and
    says "connected".
-4. Tokens refresh in the background. If a refresh fails the connector shows `needs_reauth`:
-   repeat step 3.
+4. Tokens refresh in the background. If the provider rejects a refresh the connector shows
+   `needs_reauth`: repeat step 3. Network errors and provider outages are retried
+   automatically (the error shows in `last_error` meanwhile).
 
 ## REST API
 
@@ -153,7 +154,7 @@ Setting it up:
 | `PUT /connectors/{id}` | token | Partial update: `enabled`, `api_key`, `oauth_client {client_id, client_secret}`. 422 for the wrong kind of secret, 503 if `ALFRED_VAULT_KEY` is unset. |
 | `DELETE /connectors/{id}/auth` | token | Forget tokens and API key (the OAuth client is kept). |
 | `GET /connectors/{id}/auth/start` | token | `{url}` to sign in at the provider. |
-| `GET /connectors/{id}/auth/callback` | **open** | Provider redirect target. Accepts only a one-time `state` from `/auth/start` (10 minutes), plus PKCE. |
+| `GET /connectors/{id}/auth/callback` | **open** | Provider redirect target. Accepts only a one-time `state` from `/auth/start` (10 minutes), plus PKCE. Shows a provider `error` only if it's a plain error code. |
 
 ## Configuration
 

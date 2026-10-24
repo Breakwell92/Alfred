@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import math
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
@@ -17,7 +18,15 @@ HTTP_TIMEOUT_S = 15.0
 
 
 class OAuthError(RuntimeError):
-    """The provider refused a code exchange or refresh, or answered nonsense."""
+    """The provider refused a code exchange or refresh, or answered nonsense.
+
+    `retryable` is True for failures that say nothing about the grant (network error,
+    provider 5xx or 429): the same request may work later.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def new_state() -> str:
@@ -120,7 +129,9 @@ class OAuth2Client:
                     connector.oauth.token_url, data=data, headers={"Accept": "application/json"}
                 )
         except httpx.HTTPError as exc:
-            raise OAuthError(f"{connector.name} token endpoint unreachable: {exc}") from exc
+            raise OAuthError(
+                f"{connector.name} token endpoint unreachable: {exc}", retryable=True
+            ) from exc
         try:
             body: Any = response.json()
         except ValueError:
@@ -130,20 +141,40 @@ class OAuth2Client:
             error = body.get("error") if isinstance(body, dict) else None
             raise OAuthError(
                 f"{connector.name} token request failed: HTTP {response.status_code}"
-                + (f" ({error})" if error else "")
+                + (f" ({error})" if error else ""),
+                # Provider outage or rate limit: try again. 4xx (invalid_grant...) is final.
+                retryable=response.status_code >= 500 or response.status_code == 429,
             )
         access_token = body.get("access_token")
         if not isinstance(access_token, str) or not access_token:
             raise OAuthError(f"{connector.name} token response has no access_token")
-        expires_in = body.get("expires_in")
         expires_at = None
-        if isinstance(expires_in, int | float) or (isinstance(expires_in, str) and expires_in):
-            expires_at = now + timedelta(seconds=float(expires_in))
+        seconds = _seconds(body.get("expires_in"))
+        if seconds is not None:
+            expires_at = now + timedelta(seconds=seconds)
+        scope = body.get("scope")
+        if isinstance(scope, list):  # some providers send a list
+            scope = " ".join(str(s) for s in scope)
+        refresh_token = body.get("refresh_token")
+        token_type = body.get("token_type")
         return TokenSet(
             access_token=access_token,
             # Providers that don't rotate refresh tokens omit it on refresh: keep the old one.
-            refresh_token=body.get("refresh_token") or previous_refresh_token,
+            refresh_token=refresh_token
+            if isinstance(refresh_token, str) and refresh_token
+            else previous_refresh_token,
             expires_at=expires_at,
-            token_type=body.get("token_type") or "Bearer",
-            scope=body.get("scope"),
+            token_type=token_type if isinstance(token_type, str) and token_type else "Bearer",
+            scope=scope if isinstance(scope, str) else None,
         )
+
+
+def _seconds(value: Any) -> float | None:
+    """`expires_in` as seconds; None (no known expiry) if it's missing or not a number."""
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None

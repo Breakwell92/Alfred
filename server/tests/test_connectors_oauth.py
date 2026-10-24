@@ -210,3 +210,75 @@ def test_delete_auth_forgets_tokens_but_keeps_client(service: ConnectorService) 
     assert info.has_oauth_client
     assert info.token_expires_at is None
     assert service.credentials_for("acme") is None
+
+
+@pytest.mark.parametrize("failure", ["unreachable", 503, 429])
+def test_transient_refresh_failure_retries_next_tick(
+    service: ConnectorService, provider: FakeProvider, clock: Clock, failure: str | int
+) -> None:
+    sign_in(service)
+    if failure == "unreachable":
+        provider.unreachable = True
+    else:
+        provider.fail_with = int(failure)
+    clock.advance(minutes=56)
+
+    assert service.refresh_due() == []
+    info = service.info("acme")
+    assert info.status == "connected"  # the grant may still be fine
+    assert info.last_error
+
+    provider.unreachable, provider.fail_with = False, None
+    assert service.refresh_due() == ["acme"]  # retried on the next tick
+    info = service.info("acme")
+    assert (info.status, info.last_error) == ("connected", None)
+    creds = service.credentials_for("acme")
+    assert creds is not None and creds.access_token == "access-2"
+
+
+def test_transient_failure_with_expired_token_loads_nothing(
+    service: ConnectorService, provider: FakeProvider, clock: Clock
+) -> None:
+    sign_in(service)
+    provider.fail_with = 503
+    clock.advance(hours=2)
+
+    assert service.credentials_for("acme") is None
+    assert service.info("acme").status == "connected"
+
+
+@pytest.mark.parametrize("status", [400, 401])
+def test_rejected_grant_needs_reauth(
+    service: ConnectorService, provider: FakeProvider, clock: Clock, status: int
+) -> None:
+    sign_in(service)
+    provider.fail_with = status
+    clock.advance(minutes=56)
+
+    service.refresh_due()
+
+    assert service.info("acme").status == "needs_reauth"
+
+
+@pytest.mark.parametrize("expires_in", ["3600s", "never", None, [1], -5, True])
+def test_bad_expires_in_means_no_known_expiry(
+    service: ConnectorService, provider: FakeProvider, expires_in: object
+) -> None:
+    provider.extra = {"expires_in": expires_in}
+    sign_in(service)
+
+    info = service.info("acme")
+    assert info.status == "connected"
+    assert info.token_expires_at is None
+
+
+def test_numeric_string_expires_in_and_list_scope(
+    service: ConnectorService, provider: FakeProvider, clock: Clock
+) -> None:
+    provider.extra = {"expires_in": "1800", "scope": ["items.read", "items.write"]}
+    sign_in(service)
+
+    assert service.info("acme").token_expires_at == clock.now + timedelta(seconds=1800)
+    row = service.store.tokens("acme")
+    assert row is not None
+    assert service.vault.decrypt(row.ciphertext)["scope"] == "items.read items.write"

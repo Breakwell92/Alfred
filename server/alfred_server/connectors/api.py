@@ -7,6 +7,7 @@ carry the API token. It only accepts a one-time `state` created by the protected
 """
 
 import contextlib
+import re
 from html import escape
 from typing import Annotated
 
@@ -27,6 +28,8 @@ from alfred_server.connectors.vault import VaultError, VaultUnavailableError
 
 router = APIRouter()
 callback_router = APIRouter()
+
+_ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 
 Service = Annotated[ConnectorService, Depends(get_connector_service)]
 
@@ -144,7 +147,11 @@ def connector_auth_callback(
         # Consume the state so it can't be replayed, then report the provider's error code.
         with contextlib.suppress(Exception):  # best effort
             service.store.pop_oauth_state(state)
-        return _page("Sign-in failed", f"The provider said: {error or 'no code'}.", 400)
+        # This route is open, so `error` is attacker-controlled: show only RFC 6749-style codes
+        # (e.g. access_denied), never arbitrary text on Alfred's page.
+        if _ERROR_CODE.fullmatch(error):
+            return _page("Sign-in failed", f"The provider said: {error}.", 400)
+        return _page("Sign-in failed", "The provider didn't complete the sign-in.", 400)
     try:
         info = service.complete_auth(connector_id, code=code, state=state)
     except ConnectorNotFoundError:

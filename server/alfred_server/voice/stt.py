@@ -50,6 +50,10 @@ class WhisperLikeModel(Protocol):
     def transcribe(self, audio: np.ndarray, **kwargs: Any) -> tuple[Iterable[Any], Any]: ...
 
 
+class AudioTooLongError(ValueError):
+    """The streamed utterance exceeded `stt_max_audio_s`."""
+
+
 def pcm16_to_float32(data: bytes) -> np.ndarray:
     """Convert signed 16-bit little-endian PCM to float32 samples in [-1, 1)."""
     if len(data) % 2:
@@ -66,9 +70,16 @@ class FasterWhisperSTT:
         self._slots = asyncio.Semaphore(settings.stt_max_concurrency)
 
     async def transcribe(self, chunks: AsyncIterator[bytes]) -> Transcript:
+        max_bytes = int(self._settings.stt_max_audio_s * SAMPLE_RATE) * 2
         buffer = bytearray()
         async for chunk in chunks:
             buffer.extend(chunk)
+            if len(buffer) > max_bytes:
+                # Stop reading: a stuck VAD or misbehaving client must not grow this forever.
+                raise AudioTooLongError(
+                    f"Utterance longer than {self._settings.stt_max_audio_s:g} s "
+                    "(ALFRED_STT_MAX_AUDIO_S)"
+                )
         audio = pcm16_to_float32(bytes(buffer))
         duration = len(audio) / SAMPLE_RATE
         if not len(audio):
@@ -118,6 +129,9 @@ def _load_model(settings: Settings) -> WhisperLikeModel:
         device=device,
         compute_type=compute_type,
         download_root=settings.stt_download_root or None,
+        # One CTranslate2 worker per allowed concurrent job; with a single worker a second
+        # job just queues inside CTranslate2. Each extra worker costs some memory (ADR 0002).
+        num_workers=settings.stt_max_concurrency,
     )
     logger.info(
         "Loaded STT model %s (%s, %s) in %.1fs",
@@ -155,14 +169,51 @@ def _register_cuda_libraries() -> None:
     spec = importlib.util.find_spec("nvidia")
     if spec is None or not spec.submodule_search_locations:
         return
-    for root in map(Path, spec.submodule_search_locations):
-        if sys.platform == "win32":
-            for bin_dir in root.glob("*/bin"):
-                os.add_dll_directory(str(bin_dir))
-                os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-        else:
-            for lib in sorted(root.glob("*/lib/lib*.so.*")):
-                try:
-                    ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
-                except OSError as exc:  # pragma: no cover - depends on the host's libraries
-                    logger.debug("Skipping %s: %s", lib, exc)
+    roots = [Path(location) for location in spec.submodule_search_locations]
+    if sys.platform == "win32":
+        _add_windows_dll_dirs(sorted(d for root in roots for d in root.glob("*/bin")))
+    else:
+        _preload_shared_libraries(
+            sorted(lib for root in roots for lib in root.glob("*/lib/lib*.so.*"))
+        )
+
+
+_registered_dll_dirs: set[str] = set()
+_preloaded_libraries: set[str] = set()
+
+
+def _add_windows_dll_dirs(bin_dirs: list[Path]) -> None:
+    """Add each directory to the DLL search path (and PATH) once per process."""
+    for bin_dir in map(str, bin_dirs):
+        if bin_dir in _registered_dll_dirs:
+            continue
+        os.add_dll_directory(bin_dir)
+        path = os.environ.get("PATH", "")
+        if bin_dir not in path.split(os.pathsep):
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{path}"
+        _registered_dll_dirs.add(bin_dir)
+
+
+def _preload_shared_libraries(libs: list[Path]) -> None:
+    """`dlopen` every library globally, retrying failures until no more can be loaded.
+
+    Libraries depend on each other (e.g. libcublas needs libcublasLt, which sorts after it), so
+    a single pass in name order isn't enough. Whatever still fails is logged as a warning:
+    CTranslate2 will then fail to load with a less helpful error.
+    """
+    pending = [lib for lib in libs if str(lib) not in _preloaded_libraries]
+    errors: dict[Path, OSError] = {}
+    while pending:
+        errors = {}
+        for lib in pending:
+            try:
+                ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
+            except OSError as exc:
+                errors[lib] = exc
+            else:
+                _preloaded_libraries.add(str(lib))
+        if len(errors) == len(pending):
+            break  # no progress this pass
+        pending = list(errors)
+    for lib, error in errors.items():
+        logger.warning("Could not preload CUDA library %s: %s", lib, error)

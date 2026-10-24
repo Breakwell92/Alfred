@@ -6,8 +6,9 @@ Run from `server/` (CUDA needs `uv sync --extra cuda`):
     uv run python scripts/bench_stt.py --model small.en --compute-type int8_float16
 
 One model per run, so the VRAM figure isn't polluted by a previously loaded model.
-Latency is measured end to end through `FasterWhisperSTT.transcribe` (chunks streamed in),
-from the last chunk arriving to the transcript being returned.
+Latency is measured end to end through `FasterWhisperSTT.transcribe` (chunks streamed in):
+from the end of the stream (after the last chunk has been consumed) to the transcript being
+returned, so it includes PCM conversion and any wait for a concurrency slot, not just decoding.
 Results are recorded in docs/decisions/0002-stt.md.
 """
 
@@ -50,9 +51,18 @@ def words(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9']+", text.lower()))
 
 
-async def stream(data: bytes) -> AsyncIterator[bytes]:
-    for start in range(0, len(data), CHUNK_BYTES):
-        yield data[start : start + CHUNK_BYTES]
+async def timed_transcribe(stt: FasterWhisperSTT, data: bytes) -> tuple[str, float]:
+    """Stream `data` in phone-sized chunks; return the text and ms from end of stream."""
+    stream_ended = 0.0
+
+    async def stream() -> AsyncIterator[bytes]:
+        nonlocal stream_ended
+        for start in range(0, len(data), CHUNK_BYTES):
+            yield data[start : start + CHUNK_BYTES]
+        stream_ended = time.perf_counter()
+
+    transcript = await stt.transcribe(stream())
+    return transcript.text, (time.perf_counter() - stream_ended) * 1000
 
 
 def main() -> None:
@@ -62,6 +72,9 @@ def main() -> None:
     parser.add_argument("--compute-type", default="auto")
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--runs", type=int, default=10, help="timed runs per clip")
+    parser.add_argument(
+        "--max-concurrency", type=int, default=1, help="CTranslate2 workers (VRAM per worker)"
+    )
     args = parser.parse_args()
 
     settings = Settings(
@@ -70,6 +83,7 @@ def main() -> None:
         stt_device=args.device,
         stt_compute_type=args.compute_type,
         stt_beam_size=args.beam_size,
+        stt_max_concurrency=args.max_concurrency,
     )
     transcripts: dict[str, str] = json.loads((AUDIO_DIR / "transcripts.json").read_text("utf-8"))
 
@@ -82,7 +96,7 @@ def main() -> None:
 
     print(
         f"model={args.model} device={args.device} compute_type={args.compute_type} "
-        f"beam={args.beam_size} load={load_s:.1f}s runs={args.runs}"
+        f"beam={args.beam_size} workers={args.max_concurrency} load={load_s:.1f}s runs={args.runs}"
     )
     print("| clip | audio s | mean ms | p50 ms | p95 ms | RTF | similarity | text |")
     print("| --- | --- | --- | --- | --- | --- | --- | --- |")
@@ -92,9 +106,8 @@ def main() -> None:
         latencies: list[float] = []
         text = ""
         for _ in range(args.runs):
-            transcript = asyncio.run(stt.transcribe(stream(pcm)))
-            latencies.append(transcript.processing_s * 1000)
-            text = transcript.text
+            text, latency_ms = asyncio.run(timed_transcribe(stt, pcm))
+            latencies.append(latency_ms)
         duration = len(pcm) / 2 / 16000
         p95 = statistics.quantiles(latencies, n=20)[-1] if len(latencies) > 1 else latencies[0]
         mean = statistics.fmean(latencies)

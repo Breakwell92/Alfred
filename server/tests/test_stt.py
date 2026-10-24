@@ -16,7 +16,13 @@ import pytest
 from pydantic import ValidationError
 
 from alfred_server.config import Settings
-from alfred_server.voice.stt import FasterWhisperSTT, pcm16_to_float32, resolve_compute_type
+from alfred_server.voice import stt as stt_module
+from alfred_server.voice.stt import (
+    AudioTooLongError,
+    FasterWhisperSTT,
+    pcm16_to_float32,
+    resolve_compute_type,
+)
 
 AUDIO_DIR = Path(__file__).parent / "fixtures" / "audio"
 TRANSCRIPTS: dict[str, str] = json.loads((AUDIO_DIR / "transcripts.json").read_text("utf-8"))
@@ -110,6 +116,105 @@ def test_empty_audio_returns_empty_transcript_without_decoding() -> None:
     assert transcript.text == ""
     assert transcript.audio_duration_s == 0.0
     assert model.calls == []
+
+
+def test_audio_longer_than_limit_is_rejected_without_decoding() -> None:
+    model = FakeModel()
+    stt = FasterWhisperSTT(Settings(_env_file=None, stt_max_audio_s=1.0), model=model)
+    consumed = 0
+
+    async def endless() -> AsyncIterator[bytes]:
+        nonlocal consumed
+        while True:
+            consumed += 1
+            yield b"\x00\x00" * 1600  # 0.1 s
+
+    with pytest.raises(AudioTooLongError, match="1 s"):
+        asyncio.run(stt.transcribe(endless()))
+
+    assert consumed == 11  # stopped reading just past 1 s
+    assert model.calls == []
+
+
+def test_audio_exactly_at_limit_is_accepted() -> None:
+    model = FakeModel()
+    stt = FasterWhisperSTT(Settings(_env_file=None, stt_max_audio_s=1.0), model=model)
+
+    transcript = asyncio.run(stt.transcribe(stream(b"\x00\x00" * 16000, 640)))
+
+    assert transcript.audio_duration_s == pytest.approx(1.0)
+
+
+@pytest.fixture
+def fake_nvidia(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fake `nvidia` namespace package layout, as installed by the `cuda` extra's wheels."""
+    for package in ("cublas", "cudnn"):
+        (tmp_path / package / "bin").mkdir(parents=True)
+        (tmp_path / package / "lib").mkdir()
+    for name in ("libcublas.so.12", "libcublasLt.so.12"):
+        (tmp_path / "cublas" / "lib" / name).touch()
+    (tmp_path / "cudnn" / "lib" / "libcudnn.so.9").touch()
+    monkeypatch.setattr(
+        stt_module.importlib.util,
+        "find_spec",
+        lambda name: SimpleNamespace(submodule_search_locations=[str(tmp_path)]),
+    )
+    monkeypatch.setattr(stt_module, "_registered_dll_dirs", set())
+    monkeypatch.setattr(stt_module, "_preloaded_libraries", set())
+    return tmp_path
+
+
+def test_linux_preload_retries_libraries_that_need_a_later_one(
+    fake_nvidia: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loaded: list[str] = []
+
+    def fake_cdll(path: str, mode: int = 0) -> None:
+        name = Path(path).name
+        if name == "libcublas.so.12" and "libcublasLt.so.12" not in loaded:
+            raise OSError("libcublasLt.so.12: cannot open shared object file")
+        loaded.append(name)
+
+    monkeypatch.setattr(stt_module.sys, "platform", "linux")
+    monkeypatch.setattr(stt_module.ctypes, "CDLL", fake_cdll)
+
+    stt_module._register_cuda_libraries()
+    stt_module._register_cuda_libraries()  # second load (e.g. bench, tests) is a no-op
+
+    assert sorted(loaded) == ["libcublas.so.12", "libcublasLt.so.12", "libcudnn.so.9"]
+
+
+def test_linux_preload_warns_about_libraries_that_never_load(
+    fake_nvidia: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def fake_cdll(path: str, mode: int = 0) -> None:
+        if Path(path).name == "libcudnn.so.9":
+            raise OSError("missing dependency")
+
+    monkeypatch.setattr(stt_module.sys, "platform", "linux")
+    monkeypatch.setattr(stt_module.ctypes, "CDLL", fake_cdll)
+
+    with caplog.at_level("WARNING", logger=stt_module.__name__):
+        stt_module._register_cuda_libraries()
+
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    assert "libcudnn.so.9" in caplog.records[0].getMessage()
+
+
+def test_windows_registers_each_dll_dir_once(
+    fake_nvidia: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    added: list[str] = []
+    monkeypatch.setattr(stt_module.sys, "platform", "win32")
+    monkeypatch.setattr(stt_module.os, "add_dll_directory", added.append, raising=False)
+    monkeypatch.setenv("PATH", "original")
+
+    stt_module._register_cuda_libraries()
+    stt_module._register_cuda_libraries()
+
+    bin_dirs = [str(fake_nvidia / p / "bin") for p in ("cublas", "cudnn")]
+    assert added == bin_dirs
+    assert os.environ["PATH"].split(os.pathsep) == [*reversed(bin_dirs), "original"]
 
 
 @pytest.mark.parametrize("limit", [1, 2])

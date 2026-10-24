@@ -129,6 +129,7 @@ Before finishing a ticket, update whichever of these your change affected. Never
 
 - Never review or merge your own work in the session that wrote it.
 - Reviews run in a fresh session with `/review`, which picks up the oldest open PR labelled `ready-for-review` (or `/review STU-xx` for a specific one) and claims it by swapping the label to `in-review`.
+- Reviews start in two ways. When `/ticket` hands a PR off, it starts a fresh local review session itself (`/review STU-xx`, desktop app only). A scheduled local task in the desktop app also runs `/review` every 30 minutes as a backstop: it catches re-reviews after auto-fix (auto-fix turns can't start sessions) and anything the first route missed.
 - The reviewer checks the PR against the ticket's acceptance criteria and this file. It never rewrites the code itself.
 - **Reviews act as a separate GitHub account** (the reviewer), so review comments aren't authored by the account that opened the PR. `/review` routes every GitHub call through `.claude/scripts/gh-as-reviewer.sh`, which loads the reviewer's token from `~/.config/alfred/reviewer-token` (on Windows, `%USERPROFILE%\.config\alfred\reviewer-token`). Reviews therefore run on a machine that has that file; without it (e.g. cloud sessions) `/review` stops. It also stops if the reviewer account is the PR's author.
 - **No feedback** (nothing at all to comment on, CI green, branch mergeable): the reviewer squash-merges the PR, deletes the branch, and moves the ticket to **QA** if it has "Needs Dan to verify" items, otherwise **Done**.

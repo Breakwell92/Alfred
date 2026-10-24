@@ -51,7 +51,8 @@ Ticket requested: "$ARGUMENTS"
      - In a local session: you can't enable it yourself, so end your summary with "Run `/autofix-pr` on this branch to turn on auto-fix."
    - Comment on the Linear ticket with the PR link, a short summary, anything needing my verification, and follow-ups. Move it to **Code Review** (keep it assigned).
    - If you had to stop because something is missing, move it to **Blocked** (keep it assigned) and comment with exactly what's needed instead.
+   - **Start the review in its own session.** I ask for this on every ticket: once the ticket is in **Code Review**, in the Claude desktop app call `start_session` (`mcp__ccd_session__start_session`, load it via ToolSearch if it's deferred) with `initiation: "user_asked"`, `context: "fresh"`, `use_worktree: true`, title `Review STU-xx` and prompt `/review STU-xx`. It must run locally (the reviewer token lives on this machine), so never `target: "cloud"`. If the tool isn't available (CLI, cloud) or the app refuses the start, skip this; the scheduled `/review` task picks the PR up from its `ready-for-review` label.
 
-8. **When review feedback arrives** (auto-fix events, or resuming later): follow "Responding to review feedback" in CLAUDE.md. Fix clear comments, push, reply on each thread, then swap `changes-requested` for `ready-for-review` and move the ticket back to **Code Review**.
+8. **When review feedback arrives** (auto-fix events, or resuming later): follow "Responding to review feedback" in CLAUDE.md. Fix clear comments, push, reply on each thread, then swap `changes-requested` for `ready-for-review` and move the ticket back to **Code Review**. The app doesn't let auto-fix turns start sessions, so don't try to start the re-review; the scheduled `/review` task picks it up.
 
 Finish with a short summary: which ticket, what was done, what needs me, the PR link, and whether auto-fix is on.

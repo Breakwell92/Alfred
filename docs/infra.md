@@ -151,5 +151,8 @@ All documented in `infra/.env.example`. Compose reads `infra/.env`; the server r
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | compose (LiteLLM) | Cloud keys; empty disables the alias. |
 | `LITELLM_LOCAL_ROUTER_MODEL`, `LITELLM_LOCAL_MAIN_MODEL`, `LITELLM_CLOUD_{CLAUDE,GPT,GEMINI}_MODEL` | compose (LiteLLM) | Optional: what each alias points at. |
 | `ALFRED_LITELLM_BASE_URL` | server | LiteLLM proxy URL; must match `LITELLM_BIND_ADDRESS` and `LITELLM_PORT`. |
-| `ALFRED_LITELLM_API_KEY` | server | Key the server sends to the proxy (the master key or a virtual key). |
+| `ALFRED_LITELLM_API_KEY` | server | Key the server sends to the proxy (the master key or a virtual key). The budget service also uses it for `GET /model/info` (prices). |
+| `ALFRED_LITELLM_DATABASE_URL` | server | Optional: LiteLLM's database, for spend logs. Default: `ALFRED_DATABASE_URL` with database `litellm`; set it if you change `LITELLM_DB`. |
+| `ALFRED_TIMEZONE` | server | IANA timezone (default `Europe/London`); budget months and days start at local midnight. |
+| `ALFRED_BUDGET_USD_TO_GBP` | server | Fixed USD→GBP rate for spend and estimates (default 0.80). See `docs/decisions/0008-budget-service.md`. |
 | `ALFRED_API_TOKEN` | server | Shared bearer token the Android app sends; required on every route except `/health` (unset → 503). See `docs/decisions/0004-android-client-stack.md`. |

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 
 from alfred_server import __version__
 from alfred_server.auth import require_api_token
+from alfred_server.budget.api import router as budget_router
 from alfred_server.chat import router as chat_router
 from alfred_server.config import Settings, get_settings
 
@@ -71,6 +72,9 @@ def create_app() -> FastAPI:
     def voices(tts: Annotated[LocalTTS, Depends(tts_dependency)]) -> dict[str, Any]:
         """Installed TTS voices per engine, the default voice and the output sample rate."""
         return voices_response(tts)
+
+    # GET/PUT /settings/budget, GET /spend/summary.
+    protected.include_router(budget_router)
 
     protected.include_router(chat_router)
     app.include_router(protected)

@@ -399,7 +399,7 @@ def test_build_tts_falls_back_to_piper_when_kokoro_fails_to_load(
     assert "Kokoro failed to load" in caplog.text
     assert "falling back to Piper voice en_GB-alan-medium" in caplog.text
     assert [v.id for v in tts.voices()] == ["en_GB-alan-medium"]
-    assert tts.default_voice == VoiceConfig("kokoro", "bm_george")
+    assert tts.default_voice == VoiceConfig("piper", "en_GB-alan-medium")
 
 
 def test_build_tts_fails_when_no_engine_loads(tmp_path: Path) -> None:
@@ -414,10 +414,10 @@ def test_build_tts_uses_kokoro_when_it_loads(
     monkeypatch.setattr(PiperEngine, "load", lambda self, voice: object())
     monkeypatch.setattr(KokoroEngine, "load", classmethod(lambda cls, *args: cls(FakeKokoro())))
 
-    tts = build_tts(Settings(_env_file=None, tts_model_dir=str(tmp_path), tts_engine="piper"))
+    tts = build_tts(Settings(_env_file=None, tts_model_dir=str(tmp_path), tts_engine="kokoro"))
 
     assert {v.engine for v in tts.voices()} == {"kokoro", "piper"}
-    assert tts.default_voice == VoiceConfig("piper", "en_GB-alan-medium")
+    assert tts.default_voice == VoiceConfig("kokoro", "bm_george")
 
 
 # --- GET /voices -----------------------------------------------------------------------------

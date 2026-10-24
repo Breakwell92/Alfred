@@ -59,8 +59,9 @@ class Settings(BaseSettings):
     # Directory holding the model files (scripts/download_tts_models.py fills it).
     # None uses ~/.cache/alfred/tts.
     tts_model_dir: str | None = None
-    # Engine of the default voice. Piper is also the automatic fallback if Kokoro won't load.
-    tts_engine: Literal["kokoro", "piper"] = "kokoro"
+    # Engine of the default voice (Dan picked Piper's en_GB-alan-medium after a listening test).
+    # Kokoro still loads for other voices; Piper is the automatic fallback if it won't.
+    tts_engine: Literal["kokoro", "piper"] = "piper"
     tts_kokoro_voice: str = "bm_george"
     tts_kokoro_model: str = "kokoro-v1.0.onnx"
     tts_kokoro_voices: str = "voices-v1.0.bin"

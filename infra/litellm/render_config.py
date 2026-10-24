@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -62,38 +62,56 @@ def render(text: str, env: Mapping[str, str]) -> tuple[dict[str, Any], list[str]
     return config, dropped
 
 
-def build_ca_bundle(cert_dir: Path, base_bundle: Path, dest: Path) -> list[str]:
+CA_BUNDLE = Path("/tmp/alfred-ca-bundle.pem")
+_PEM_MARKER = b"-----BEGIN CERTIFICATE-----"
+
+
+def build_ca_bundle(cert_dir: Path, base_bundle: Path, dest: Path) -> tuple[list[str], list[str]]:
     """Write `base_bundle` plus every PEM certificate in `cert_dir` to `dest`.
 
-    Returns the names of the files added. Writes nothing and returns [] when `cert_dir` is
-    missing or holds no certificates, so a host without interception keeps the default bundle.
+    Returns the names of the files added and of the `*.crt` / `*.pem` files skipped because
+    they aren't PEM (e.g. a DER export, or UTF-16 text from PowerShell 5.1's `>`). Other files
+    such as README.md are ignored silently. Writes nothing when no certificate was added, so a
+    host without interception keeps the default bundle.
     """
     if not cert_dir.is_dir():
-        return []
-    extras = [
-        path
-        for path in sorted(cert_dir.iterdir())
-        if path.suffix in {".crt", ".pem"}
-        and "-----BEGIN CERTIFICATE-----" in path.read_text(encoding="utf-8", errors="replace")
-    ]
-    if not extras:
-        return []
-    parts = [base_bundle.read_text(encoding="utf-8")]
-    parts += [path.read_text(encoding="utf-8") for path in extras]
-    dest.write_text("\n".join(part.strip() + "\n" for part in parts), encoding="utf-8")
-    return [path.name for path in extras]
+        return [], []
+    added: list[Path] = []
+    skipped: list[str] = []
+    for path in sorted(cert_dir.iterdir()):
+        if path.suffix not in {".crt", ".pem"}:
+            continue
+        if _PEM_MARKER in path.read_bytes():
+            added.append(path)
+        else:
+            skipped.append(path.name)
+    if added:
+        parts = [base_bundle.read_text(encoding="utf-8")]
+        parts += [path.read_text(encoding="utf-8", errors="replace") for path in added]
+        dest.write_text("\n".join(part.strip() + "\n" for part in parts), encoding="utf-8")
+    return [path.name for path in added], skipped
 
 
-def _trust_extra_cas() -> None:
-    cert_dir = os.environ.get("EXTRA_CA_DIR")
+def trust_extra_cas(
+    env: MutableMapping[str, str], base_bundle: Path | None = None, dest: Path = CA_BUNDLE
+) -> None:
+    """Point `SSL_CERT_FILE` in `env` at certifi's bundle plus the certs in `$EXTRA_CA_DIR`.
+
+    `env` is normally `os.environ`, which `os.execvp` hands to the proxy. Leaves it untouched
+    when `EXTRA_CA_DIR` is unset or holds no PEM certificates.
+    """
+    cert_dir = env.get("EXTRA_CA_DIR")
     if not cert_dir:
         return
-    import certifi  # LiteLLM's own dependency; imported here so tests don't need it
+    if base_bundle is None:
+        import certifi  # LiteLLM's own dependency; imported here so tests don't need it
 
-    dest = Path("/tmp/alfred-ca-bundle.pem")
-    added = build_ca_bundle(Path(cert_dir), Path(certifi.where()), dest)
+        base_bundle = Path(certifi.where())
+    added, skipped = build_ca_bundle(Path(cert_dir), base_bundle, dest)
+    for name in skipped:
+        print(f"render_config: ignoring {name}: not a PEM certificate", flush=True)
     if added:
-        os.environ["SSL_CERT_FILE"] = str(dest)
+        env["SSL_CERT_FILE"] = str(dest)
         print(f"render_config: trusting extra CAs: {', '.join(added)}", flush=True)
 
 
@@ -109,7 +127,7 @@ def main(argv: list[str]) -> None:
     print(f"render_config: aliases enabled: {names}", flush=True)
     if dropped:
         print(f"render_config: disabled (API key not set): {', '.join(dropped)}", flush=True)
-    _trust_extra_cas()
+    trust_extra_cas(os.environ)
     if rest and rest[0] == "--":
         rest = rest[1:]
     if rest:

@@ -8,7 +8,7 @@ Kokoro: the ONNX model and the voice pack from the kokoro-onnx releases (one fil
 Kokoro voice). Piper: one .onnx + .onnx.json pair per voice, from the rhasspy/piper-voices
 repository on Hugging Face, pinned to one commit. Files with a known SHA-256 (the Kokoro files
 and the default Piper voice) are checked after download; a mismatch deletes the download and
-fails. Files already present are skipped. See docs/decisions/0005-tts.md.
+fails. Files already present are skipped. See docs/decisions/0006-tts.md.
 """
 
 from __future__ import annotations

@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # Where models are downloaded; None uses the Hugging Face cache.
     stt_download_root: str | None = None
 
-    # Text-to-speech (Kokoro, Piper fallback). See docs/decisions/0005-tts.md.
+    # Text-to-speech (Kokoro, Piper fallback). See docs/decisions/0006-tts.md.
     # Off by default so tests and CI never load a model; the voice gateway enables it.
     tts_enabled: bool = False
     # Directory holding the model files (scripts/download_tts_models.py fills it).

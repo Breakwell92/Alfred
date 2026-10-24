@@ -3,7 +3,7 @@
 The voice gateway depends only on the `TextToSpeech` protocol. The default implementation,
 `LocalTTS`, splits the incoming text into sentences (the first one as early as possible, see
 `SentenceSplitter`) and synthesizes each with Kokoro on the GPU, or Piper on the CPU as a
-fallback. Engines, benchmarks and the output format: docs/decisions/0005-tts.md.
+fallback. Engines, benchmarks and the output format: docs/decisions/0006-tts.md.
 
 Output format, whatever the engine: mono, signed 16-bit little-endian PCM at
 `OUTPUT_SAMPLE_RATE` (24 kHz), in chunks of at most `CHUNK_BYTES` (200 ms).
@@ -326,7 +326,7 @@ class PiperEngine:
     """Piper voices found in a directory (`<name>.onnx` + `<name>.onnx.json`), loaded lazily.
 
     Always on the CPU: medium-quality voices synthesize a short sentence in ~30 ms there, faster
-    than on the GPU (docs/decisions/0005-tts.md), and use no VRAM.
+    than on the GPU (docs/decisions/0006-tts.md), and use no VRAM.
     """
 
     name: Engine = "piper"

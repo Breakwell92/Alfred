@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The server is reached over Tailscale, which already encrypts traffic (WireGuard), and its
+    MagicDNS name has no public TLS certificate, so plain HTTP is allowed.
+    See docs/decisions/0004-android-client-stack.md.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration" />
+</network-security-config>

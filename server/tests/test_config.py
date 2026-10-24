@@ -10,6 +10,7 @@ def test_defaults() -> None:
     assert settings.host == "127.0.0.1"
     assert settings.port == 8000
     assert settings.log_level == "INFO"
+    assert settings.api_token is None
     assert settings.database_url.get_secret_value() == (
         "postgresql+psycopg://alfred@127.0.0.1:5432/alfred"
     )
@@ -41,3 +42,13 @@ def test_rejects_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_api_token_is_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALFRED_API_TOKEN", "test-token")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.api_token is not None
+    assert settings.api_token.get_secret_value() == "test-token"
+    assert "test-token" not in repr(settings)

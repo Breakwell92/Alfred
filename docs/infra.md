@@ -86,3 +86,4 @@ All documented in `infra/.env.example`. Compose reads `infra/.env`; the server r
 | `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_KV_CACHE_TYPE` | compose | Ollama memory behaviour. |
 | `ALFRED_DATABASE_URL` | server | SQLAlchemy URL (`postgresql+psycopg://…`). |
 | `ALFRED_OLLAMA_BASE_URL` | server | Ollama API base URL; must match `OLLAMA_BIND_ADDRESS` and `OLLAMA_PORT`. |
+| `ALFRED_API_TOKEN` | server | Shared bearer token the Android app sends; required on every route except `/health` (unset → 503). See `docs/decisions/0004-android-client-stack.md`. |

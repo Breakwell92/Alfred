@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # Shared bearer token the Android app sends on every request except /health.
+    # Unset means protected routes refuse all requests (503), never that they are open.
+    api_token: SecretStr | None = None
 
     # SQLAlchemy URL (psycopg 3 driver) for the compose Postgres. Secret because it
     # normally embeds the password; read it with `.get_secret_value()`.

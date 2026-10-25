@@ -22,6 +22,17 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
+  # --- Eval candidate (only when LITELLM_EVAL_CANDIDATE_MODEL is set) ----------------
+  # A second local model for `python -m evals.run --model-alias eval-candidate`, to compare
+  # with `local-main` (server/evals/README.md). Server code never uses it.
+  - model_name: eval-candidate
+    requires_env: [LITELLM_EVAL_CANDIDATE_MODEL]
+    litellm_params:
+      model: ollama_chat/${LITELLM_EVAL_CANDIDATE_MODEL:-unset}
+      api_base: http://ollama:11434
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
   # --- Cloud (each alias exists only when its key is set) ---------------------------
   - model_name: cloud-claude
     requires_env: [ANTHROPIC_API_KEY]

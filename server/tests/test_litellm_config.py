@@ -32,7 +32,7 @@ def test_without_keys_only_local_aliases() -> None:
     config, dropped = render_config.render(CONFIG, {})
 
     assert list(models(config)) == ["local-router", "local-main"]
-    assert dropped == ["cloud-claude", "cloud-gpt", "cloud-gemini"]
+    assert dropped == ["eval-candidate", "cloud-claude", "cloud-gpt", "cloud-gemini"]
     local_main = models(config)["local-main"]["litellm_params"]
     assert local_main["model"] == "ollama_chat/gpt-oss:20b"
     assert local_main["api_base"] == "http://ollama:11434"
@@ -45,7 +45,7 @@ def test_key_enables_its_alias_only() -> None:
     assert "requires_env" not in claude
     # The key stays an env reference: the rendered file holds no secrets.
     assert claude["litellm_params"]["api_key"] == "os.environ/ANTHROPIC_API_KEY"
-    assert dropped == ["cloud-gpt", "cloud-gemini"]
+    assert dropped == ["eval-candidate", "cloud-gpt", "cloud-gemini"]
 
 
 def test_config_aliases_match_server_aliases() -> None:
@@ -53,7 +53,17 @@ def test_config_aliases_match_server_aliases() -> None:
     config, dropped = render_config.render(CONFIG, env)
 
     assert tuple(models(config)) == MODEL_ALIASES
-    assert dropped == []
+    # The eval-only alias is not a server alias.
+    assert dropped == ["eval-candidate"]
+
+
+def test_eval_candidate_only_when_set() -> None:
+    env = {"LITELLM_EVAL_CANDIDATE_MODEL": "mistral-small3.2:24b"}
+    config, _ = render_config.render(CONFIG, env)
+
+    candidate = models(config)["eval-candidate"]["litellm_params"]
+    assert candidate["model"] == "ollama_chat/mistral-small3.2:24b"
+    assert candidate["input_cost_per_token"] == 0
 
 
 def test_model_overrides_from_env() -> None:

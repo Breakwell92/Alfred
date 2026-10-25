@@ -18,6 +18,8 @@ Single activity, Compose navigation and Material 3, ViewModels with coroutines/F
 | `ui/` | `AlfredApp` (bottom nav), Home (status, push-to-talk, confirmation sheet; `HomeViewModel` + `VoiceViewModel`), Settings, Connectors and Activity screens |
 | `ui/theme/` | Design system tokens (`docs/decisions/0018-android-design-system.md`): dark-only `AlfredTheme` with `AlfredTheme.colors` / `.typography` / `.spacing` (also mapped onto Material 3), `ChamferShape`, `OctagonShape`, `HexagonPillShape`. The only place colour literals may appear (`ThemeTest` enforces it) |
 | `ui/components/` | Shared components: `GridBackground`, `ChamferIconButton`, `OctagonActionButton`, `PrimaryButton`, `HexagonButton`, `StatusPill`, `StatTile`, `SelectableCard`; all previewed in `DesignSystemPreviews.kt` |
+| `ui/orb/` | `AlfredOrb` radar orb (`docs/decisions/0020-radar-orb.md`): `OrbState` (idle, listening, thinking, speaking), `OrbSize` (`Large` for Home, `Small` for Transmitting), mic/playback `level`, previews in `OrbPreviews.kt`; `OrbMotion` is its unit-tested animation model |
+| `src/debug/` | Debug-build-only screens: `OrbDebugActivity` (the orb driven by fake speech levels) |
 
 Fonts (Rajdhani, JetBrains Mono, Titillium Web) are bundled in `app/src/main/res/font/` under the SIL Open Font License; the licence texts are in `licenses/fonts/`.
 
@@ -29,6 +31,12 @@ Needs the Android SDK (`ANDROID_HOME`, or `sdk.dir` in a git-ignored `local.prop
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"   # Windows / Git Bash example
 ./gradlew lint testDebugUnitTest assembleDebug                    # what CI runs
 ./gradlew installDebug                                            # install on a connected phone (adb)
+```
+
+The orb's debug screen (debug builds only) drives every orb state with fake speech levels:
+
+```bash
+adb shell am start -n com.alfred.app/com.alfred.app.debug.OrbDebugActivity
 ```
 
 The APK lands in `app/build/outputs/apk/debug/app-debug.apk` (arm64 phones and the x86_64 emulator only: ONNX Runtime's native code is ~35 MB per ABI).

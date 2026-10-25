@@ -26,7 +26,8 @@ class ThemeTest {
     fun `no hard-coded colours outside the theme`() {
         val sources = File("src/main/java")
         assertTrue("run from the app module: ${sources.absolutePath}", sources.isDirectory)
-        val offenders = sources.walk()
+        // Debug-only screens (e.g. the orb's debug screen) count too.
+        val offenders = (sources.walk() + File("src/debug/java").walk())
             .filter { it.isFile && it.extension == "kt" }
             .filterNot { it.invariantSeparatorsPath.contains("/ui/theme/") }
             .flatMap { file ->

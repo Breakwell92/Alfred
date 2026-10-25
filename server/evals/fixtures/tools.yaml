@@ -13,16 +13,55 @@ get_weather:
   today: {high_c: 13, low_c: 7, rain_chance: 80}
   tomorrow: {summary: Sunny intervals, high_c: 15, low_c: 6, rain_chance: 10}
 
-# Home Assistant (pending)
-light_turn_on: {ok: true}
-light_turn_off: {ok: true}
-light_set_brightness: {ok: true}
-heating_set_temperature: {ok: true}
-heating_get_status: {current_c: 18.5, target_c: 20, mode: heat, boost: false}
-home_get_state:
-  lights_on: [kitchen, living room]
-  heating: {current_c: 18.5, target_c: 20}
-  front_door: locked
+# Home Assistant (alfred_server/connectors/builtin/home_assistant.py). Same style as the real
+# tools: HA's live context for ha_get_state, a short sentence for the rest.
+ha_get_state: |
+  Live Context: An overview of the areas and the devices in this smart home:
+  - names: Kitchen Lights
+    domain: light
+    state: 'on'
+    areas: Kitchen
+  - names: Lounge Lights
+    domain: light
+    state: 'on'
+    areas: Lounge
+    attributes:
+      brightness: '100'
+  - names: Bedroom Lights
+    domain: light
+    state: 'on'
+    areas: Bedroom
+  - names: Thermostat
+    domain: climate
+    state: heat
+    areas: Hall
+    attributes:
+      current_temperature: '18.5'
+      temperature: '20'
+  - names: Front Door
+    domain: lock
+    state: unlocked
+    areas: Hall
+  - names: Back Door
+    domain: lock
+    state: locked
+    areas: Kitchen
+  - names: Garage Door
+    domain: cover
+    state: closed
+    areas: Garage
+    attributes:
+      device_class: garage
+  - names: Movie Time
+    domain: scene
+ha_turn_on: "Done."
+ha_turn_off: "Done."
+ha_set_light: "Done."
+ha_set_temperature: "Done: Thermostat."
+ha_lock: "Done: Front Door."
+ha_unlock: "Done: Front Door."
+ha_open_door: "Done: Garage Door."
+ha_close_door: "Done: Garage Door."
 
 # Google Calendar (pending)
 calendar_list_events:

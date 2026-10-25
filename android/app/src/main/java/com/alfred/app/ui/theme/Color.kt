@@ -30,6 +30,8 @@ data class AlfredColors(
     val accentPressed: Color,
     /** The orb's sweep and glow falloff. */
     val accentDim: Color,
+    /** The near-white centre of the orb's glowing core. */
+    val accentGlow: Color,
     /** Text and icons on an [accent] fill. */
     val onAccent: Color,
     /** The REC dot and errors. */
@@ -49,6 +51,7 @@ val AlfredDarkColors = AlfredColors(
     accent = Color(0xFF5AC8FA),
     accentPressed = Color(0xFF45A9D6),
     accentDim = Color(0xFF1F4A5E),
+    accentGlow = Color(0xFFE9F8FF),
     onAccent = Color(0xFF07080A),
     record = Color(0xFFC0463E),
 )

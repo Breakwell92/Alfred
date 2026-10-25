@@ -51,6 +51,7 @@ It prints a line per case and a summary table, writes `reports/<time>-<aliases>.
   must_not_call: [light_turn_off] # ["*"] = no tools at all
   max_tier: local                 # local = the router must not want cloud
   reply_contains: ["kitchen"]     # optional, case-insensitive
+  expect_confirmation: irreversible  # optional: the run must pause for a write/irreversible OK
   notes: Why the case exists.
 ```
 

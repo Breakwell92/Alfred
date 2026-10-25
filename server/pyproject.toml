@@ -12,6 +12,8 @@ dependencies = [
     "faster-whisper>=1.2",
     "fastmcp>=4,<5",
     "httpx>=0.27",
+    # The MCP SDK's HTTP client; the Home Assistant connector uses it directly.
+    "httpx2>=2.10,<3",
     "kokoro-onnx>=0.6",
     "mcp>=2.1,<3",
     "numpy>=2.0",

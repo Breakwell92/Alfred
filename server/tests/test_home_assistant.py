@@ -100,6 +100,10 @@ def test_ordinary_switching_never_moves_garage_doors(
         {"name": "gate opener"},
         {"name": "alarm"},
         {"area": "garage"},
+        {"name": "garage_door"},
+        {"name": "frontgate"},
+        {"name": "Front Door Lock"},
+        {"name": "doorlock relay"},
     ],
 )
 def test_switches_never_drive_locks_or_doors_wired_as_relays(
@@ -111,6 +115,27 @@ def test_switches_never_drive_locks_or_doors_wired_as_relays(
         assert run(tool(domain, **target)) == RELAY_HINT  # type: ignore[arg-type]
 
     assert ha.calls == []
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"name": "outdoor lights"},
+        {"name": "indoor fan"},
+        {"name": "clock"},
+        {"area": "Outdoor"},
+        {"name": "doorbell chime"},
+        {"name": "network gateway"},
+        {"name": "kettle"},
+    ],
+)
+def test_switches_with_harmless_names_are_not_refused(
+    ha: FakeHomeAssistant, target: dict[str, str]
+) -> None:
+    reply = run(ha.tools().ha_turn_on("switch", **target))  # type: ignore[arg-type]
+
+    assert reply != RELAY_HINT
+    assert len(ha.calls) == 1
 
 
 def test_ordinary_switches_still_work(ha: FakeHomeAssistant) -> None:

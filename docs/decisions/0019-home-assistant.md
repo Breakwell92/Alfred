@@ -51,7 +51,7 @@ Its classifier description is deliberately short: "lights, heating, blinds, door
 - HA's argument names come from its Assist API (`name`, `area`, `floor`, `domain` and `device_class` as lists). If HA changes them, the tools need updating. The unit tests use a fake MCP server, so this needs Dan's check against the real HA.
 - `ha_get_state` returns the whole live context. In a big house that's a long tool result for the local model. Truncation keeps it bounded, but filtering by area may be needed later.
 - Locks and garage openers are often wired as relays (`switch.garage_door`). A switch call would run one without approval, and a model whose `ha_open_door` found no garage cover tends to retry with the switch. So:
-  - `ha_turn_on`/`off` refuse `switch` and `input_boolean` calls whose name or area contains lock, door, gate, garage or alarm. Matching is by substring, so `clock` is refused too.
+  - `ha_turn_on`/`off` refuse `switch` and `input_boolean` calls whose name or area mentions a lock, door, gate, garage or alarm. Whole words count, and so do compounds like `backdoor`, `garagedoor` and `doorlock`. Everyday words that merely contain one (`outdoor`, `indoor`, `clock`, `doorbell`, `gateway`) don't.
   - The agent is told never to fall back to them when a lock or door tool fails.
   - The setup doc says to expose only the proper `lock`/`cover` entity, never the relay.
   The name check is only a backstop: a relay called "opener" in the hall would still pass it.

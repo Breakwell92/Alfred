@@ -67,8 +67,29 @@ DOOR_HINT = (
 # would run without approval. Switch-like calls naming one of these are refused (a backstop:
 # the setup doc also says never to expose such switches).
 RELAY_DOMAINS = frozenset({"switch", "input_boolean"})
-# Substrings, not words, so "backdoor" and "garagedoor" count too (and, harmlessly, "clock").
-SECURE_WORDS = re.compile(r"lock|door|gate|garage|alarm", re.I)
+SECURE_WORDS = frozenset(
+    {"lock", "locks", "unlock", "door", "doors", "gate", "gates", "garage", "alarm", "alarms"}
+)
+# Compounds such as "backdoor", "garagedoor", "frontgate" or "doorlock" count as well, except
+# these everyday words that only contain one ("outdoor lights", "the clock").
+HARMLESS_WORDS = frozenset(
+    {"indoor", "indoors", "outdoor", "outdoors", "clock", "clocks", "block", "doorbell", "gateway"}
+)
+_SECURE_STEMS = ("lock", "door", "gate", "garage", "alarm")
+
+
+def names_secure_device(text: str) -> bool:
+    """Does `text` (a device name or room) mention a lock, door, gate, garage or alarm?"""
+    for word in re.findall(r"[a-z]+", text.casefold()):
+        if word in SECURE_WORDS:
+            return True
+        if word in HARMLESS_WORDS:
+            continue
+        if word.startswith(_SECURE_STEMS) or word.endswith(_SECURE_STEMS + ("doors", "gates")):
+            return True
+    return False
+
+
 RELAY_HINT = (
     "That sounds like a lock, door, gate or alarm. I won't switch it directly: ha_lock, "
     "ha_unlock, ha_open_door and ha_close_door handle those, with approval in the Alfred app."
@@ -239,7 +260,7 @@ class HomeAssistantTools(Toolkit):
         args = _targets(name, area, floor)
         if not args:
             return "Which device or room?"
-        if domain in RELAY_DOMAINS and any(SECURE_WORDS.search(v) for v in args.values()):
+        if domain in RELAY_DOMAINS and any(names_secure_device(v) for v in args.values()):
             return RELAY_HINT
         args["domain"] = [domain]
         if domain == "cover":

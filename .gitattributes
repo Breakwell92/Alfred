@@ -2,6 +2,7 @@
 *.bat text eol=crlf
 *.jar binary
 *.png binary
+*.ttf binary
 *.onnx binary
 *.tflite binary
 *.wav binary

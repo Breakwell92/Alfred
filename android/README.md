@@ -14,7 +14,11 @@ Single activity, Compose navigation and Material 3, ViewModels with coroutines/F
 | `data/server/` | `ServerClient`: checks `/health` then `/me` and returns a `ConnectionStatus`; pairs the device (`POST /devices/pair`) and answers confirmations |
 | `data/device/` | `DeviceKeys` (EC P-256 key in the Android Keystore) and `ApprovalSigner`, which signs `app_ui` approvals (server ADR 0016) |
 | `data/voice/` | Voice over `/ws/device` (`docs/protocol.md`, design in `docs/decisions/0017-android-voice-client.md`): `Protocol.kt` messages and audio frames; `DeviceConnection` (OkHttp WebSocket, `hello`, ping, reconnect with backoff); `DeviceIdRepository` (persistent `device_id`); `AudioCapture` (mic, 16 kHz PCM16, 20 ms frames); `AudioPlayer` (streaming `AudioTrack`, jitter buffer, ducking, Bluetooth); `VoiceController` (turn state machine and confirmations) |
-| `ui/` | `AlfredApp` (bottom nav), Home (status, push-to-talk, confirmation sheet; `HomeViewModel` + `VoiceViewModel`), Settings, Connectors and Activity screens, theme |
+| `ui/` | `AlfredApp` (bottom nav), Home (status, push-to-talk, confirmation sheet; `HomeViewModel` + `VoiceViewModel`), Settings, Connectors and Activity screens |
+| `ui/theme/` | Design system tokens (`docs/decisions/0018-android-design-system.md`): dark-only `AlfredTheme` with `AlfredTheme.colors` / `.typography` / `.spacing` (also mapped onto Material 3), `ChamferShape`, `OctagonShape`, `HexagonPillShape`. The only place colour literals may appear (`ThemeTest` enforces it) |
+| `ui/components/` | Shared components: `GridBackground`, `ChamferIconButton`, `OctagonActionButton`, `PrimaryButton`, `HexagonButton`, `StatusPill`, `StatTile`, `SelectableCard`; all previewed in `DesignSystemPreviews.kt` |
+
+Fonts (Rajdhani, JetBrains Mono, Titillium Web) are bundled in `app/src/main/res/font/` under the SIL Open Font License; the licence texts are in `licenses/fonts/`.
 
 ## Build and test
 

@@ -32,6 +32,12 @@ interface AudioPlayer {
      */
     val level: StateFlow<Float>
 
+    /**
+     * How much of the reply has been heard, in ms from its first sample (what `reply.words`
+     * timings count from). Polled with [level], so it follows the sound; 0 when not playing.
+     */
+    val position: StateFlow<Long>
+
     /** Starts a new reply (stopping any current one). PCM16 mono at [sampleRate]. */
     fun begin(sampleRate: Int)
 
@@ -70,6 +76,9 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
 
     private val _level = MutableStateFlow(0f)
     override val level: StateFlow<Float> = _level.asStateFlow()
+
+    private val _position = MutableStateFlow(0L)
+    override val position: StateFlow<Long> = _position.asStateFlow()
 
     // Touched only on the executor thread, except [track], which [stop] pauses directly to
     // unblock a pending write, and the volatile ones the level poller reads.
@@ -184,11 +193,12 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         )
     }
 
-    /** Publishes the level of the audio being heard now (0 until playback starts). */
+    /** Publishes the level and position of the audio being heard now (0 until playback starts). */
     private fun pollLevel() {
         val current = track
         val heard = if (current != null && started) current.runCatching(::heardFrame).getOrNull() else null
         _level.value = heard?.let(levels::levelAt) ?: 0f
+        _position.value = heard?.let { (it.coerceAtLeast(0) * 1000) / sampleRate } ?: 0L
     }
 
     /**
@@ -207,9 +217,15 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         levelPoll?.cancel(false)
         levelPoll = null
         _level.value = 0f
-        // A poll already running when cancelled could publish after the line above; this runs
+        _position.value = 0L
+        // A poll already running when cancelled could publish after the lines above; this runs
         // behind it on the same thread.
-        poller.execute { if (levelPoll == null) _level.value = 0f }
+        poller.execute {
+            if (levelPoll == null) {
+                _level.value = 0f
+                _position.value = 0L
+            }
+        }
     }
 
     private fun startPlaying(gen: Int) {

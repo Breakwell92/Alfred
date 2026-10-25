@@ -10,6 +10,13 @@ fun interface EndOfSpeechDetector {
 }
 
 /**
+ * For turns the user starts on screen (push-to-talk, CUT IN): silence after speech ends the turn
+ * (the Recording screen's "or go quiet"); nothing does before anyone speaks, and
+ * [VoiceController] caps the length.
+ */
+fun goQuiet(): EndOfSpeechDetector = EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE)
+
+/**
  * A stopgap energy endpointer until Silero VAD (STU-69, ADR 0019). The noise floor is the
  * quietest 20 ms frame of the last 3 s, so a steady fan or TV sets its own level; a frame is
  * speech when it's well above that (and above an absolute minimum).

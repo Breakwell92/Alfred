@@ -130,6 +130,15 @@ data class TurnMetadata(
     val timings: Map<String, Double> = emptyMap(),
 )
 
+/** One word of the reply and when it's heard, in ms from the start of the turn's reply audio. */
+data class SpokenWord(
+    val word: String,
+    val startMillis: Long,
+    val endMillis: Long,
+    /** A number, time or amount, shown in the accent colour. */
+    val emphasis: Boolean = false,
+)
+
 /** Server → client control messages. */
 sealed interface ServerMessage {
     data class HelloOk(
@@ -153,6 +162,9 @@ sealed interface ServerMessage {
     data class ReplyTextDelta(val turnId: String, val text: String) : ServerMessage
 
     data class ReplyAudioStart(val turnId: String, val sampleRate: Int) : ServerMessage
+
+    /** When the words of the next spoken segment are heard, sent just before its audio. */
+    data class ReplyWords(val turnId: String, val words: List<SpokenWord>) : ServerMessage
 
     data class ConfirmRequest(
         val turnId: String,
@@ -211,6 +223,7 @@ fun parseServerMessage(text: String): ServerMessage {
                 json.turnId(),
                 json.optInt("sample_rate", OUTPUT_SAMPLE_RATE),
             )
+            "reply.words" -> ServerMessage.ReplyWords(json.turnId(), parseWords(json))
             "confirm.request" -> ServerMessage.ConfirmRequest(
                 turnId = json.turnId(),
                 id = json.getString("id"),
@@ -259,6 +272,19 @@ private fun parseMetadata(json: JSONObject): TurnMetadata {
         costGbp = json.doubleOrNull("cost_gbp"),
         timings = timings,
     )
+}
+
+private fun parseWords(json: JSONObject): List<SpokenWord> {
+    val array = json.getJSONArray("words")
+    return (0 until array.length()).map { i ->
+        val word = array.getJSONObject(i)
+        SpokenWord(
+            word = word.getString("word"),
+            startMillis = word.getLong("start_ms"),
+            endMillis = word.getLong("end_ms"),
+            emphasis = word.optBoolean("emphasis", false),
+        )
+    }
 }
 
 private fun JSONObject.turnId(): String = getString("turn_id")

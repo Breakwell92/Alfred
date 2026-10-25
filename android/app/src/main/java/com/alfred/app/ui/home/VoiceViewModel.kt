@@ -4,11 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alfred.app.data.voice.DeviceConnection
 import com.alfred.app.data.voice.EndOfSpeechDetector
-import com.alfred.app.data.voice.EnergyEndOfSpeech
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.VoiceController
 import com.alfred.app.data.voice.VoicePhase
 import com.alfred.app.data.voice.VoiceState
+import com.alfred.app.data.voice.goQuiet
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -80,10 +80,3 @@ class VoiceViewModel(
         private const val STOP_TIMEOUT_MILLIS = 5_000L
     }
 }
-
-/**
- * Silence after speech ends a push-to-talk turn; nothing does before anyone speaks (the button
- * is waiting), and [VoiceController] caps the length.
- */
-private fun goQuiet(): EndOfSpeechDetector =
-    EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE)

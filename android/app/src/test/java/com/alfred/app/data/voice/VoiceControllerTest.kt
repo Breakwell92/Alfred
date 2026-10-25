@@ -155,6 +155,61 @@ class VoiceControllerTest {
     }
 
     @Test
+    fun `word timings collect for the current turn and clear with the next`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        val id = turnId()
+        val first = listOf(SpokenWord("Hello", 0, 300), SpokenWord("sir.", 300, 600))
+        val second = listOf(SpokenWord("Ready?", 700, 1_100))
+
+        connection.receive(ServerMessage.ReplyWords(id, first))
+        connection.receive(ServerMessage.ReplyWords("old-turn", listOf(SpokenWord("stale", 0, 1))))
+        connection.receive(ServerMessage.ReplyWords(id, second))
+        assertEquals(first + second, voice.state.value.words)
+
+        player.position.value = 420
+        assertEquals(420L, voice.playbackPosition.value)
+
+        voice.startListening()
+        assertTrue(voice.state.value.words.isEmpty())
+    }
+
+    @Test
+    fun `cut in silences the reply, stops the turn and starts listening`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        val id = turnId()
+        connection.receive(ServerMessage.ReplyAudioStart(id, 24_000))
+        connection.sent.clear()
+
+        assertTrue(voice.cutIn())
+
+        assertEquals("stop", player.calls.last())
+        assertEquals(ClientMessage.TurnCancel(id), connection.sent[0])
+        assertTrue(connection.sent[1] is ClientMessage.TurnStart)
+        assertEquals(VoicePhase.Listening, voice.state.value.phase)
+        assertTrue(capture.open)
+    }
+
+    @Test
+    fun `cut in without a link still silences the reply`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        val id = turnId()
+        connection.receive(ServerMessage.ReplyAudioStart(id, 24_000))
+        connection.state.value = LinkState.Waiting("down", 1_000)
+
+        assertFalse(voice.cutIn())
+
+        assertEquals("stop", player.calls.last())
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertEquals("Not connected to the server", voice.state.value.error)
+    }
+
+    @Test
     fun `cancel after the server finished only stops playback`() = runVoiceTest {
         val voice = controller()
         voice.startListening()

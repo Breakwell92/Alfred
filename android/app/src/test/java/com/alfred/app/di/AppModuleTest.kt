@@ -31,6 +31,7 @@ import com.alfred.app.ui.home.VoiceViewModel
 import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsViewModel
 import com.alfred.app.ui.settings.WakeWordSettingsViewModel
+import com.alfred.app.ui.transmitting.TransmittingViewModel
 import org.junit.Rule
 import org.junit.Test
 import org.koin.dsl.koinApplication
@@ -73,5 +74,6 @@ class AppModuleTest {
         koin.get<WakeWordController>()
         koin.get<WakeWordSettingsViewModel>()
         koin.get<RecordingViewModel>()
+        koin.get<TransmittingViewModel>()
     }
 }

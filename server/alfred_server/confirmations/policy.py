@@ -100,6 +100,11 @@ def summarise_call(policy: ToolPolicy, tool_name: str, args: Mapping[str, Any] |
     """A human-readable line for one tool call, e.g. "Send a test message to Sam: 'Hi'"."""
     args = dict(args or {})
     found = policy.registry.tool_meta(tool_name)
+    if found is not None and found[1].summarise is not None:
+        try:
+            return found[1].summarise(policy, args)
+        except Exception:
+            logger.warning("summary for %s failed", tool_name, exc_info=True)
     template = found[1].confirm_summary if found else None
     if template:
         try:

@@ -339,6 +339,27 @@ def _needs_fallback(run: RunOutput) -> bool:
     return marker or _invalid_tool_calls(run) >= FALLBACK_INVALID_TOOL_CALLS
 
 
+def _read_only(tools: list[Toolkit | MCPTools], policy: ToolPolicy) -> list[Toolkit | MCPTools]:
+    """Only the tools whose declared risk is `read`.
+
+    By risk, not tier: a `write` tool that runs without asking (lights, music) is still
+    dropped. MCP toolkits are shared across requests, so they're dropped whole rather than
+    trimmed. Agno toolkits are built per load, so trimming them affects only this request.
+    """
+    kept: list[Toolkit | MCPTools] = []
+    for toolkit in tools:
+        if isinstance(toolkit, MCPTools):
+            logger.warning("not giving MCP toolkit %s read-only: dropped", toolkit.name)
+            continue
+        for registry in (toolkit.functions, toolkit.async_functions):
+            for name in list(registry):
+                found = policy.registry.tool_meta(name)
+                if found is None or found[1].risk != "read":
+                    del registry[name]
+        kept.append(toolkit)
+    return kept
+
+
 def _with_announcement(announcement: str | None, reply: str) -> str:
     return f"{announcement} {reply}" if announcement else reply
 
@@ -506,16 +527,27 @@ class Router:
             return ToolPolicy(default_registry())
         return await asyncio.to_thread(self.gate.policy)
 
-    async def _connector_tools(self, specialist: Specialist) -> list[Toolkit | MCPTools]:
-        """The specialist's connector tools. A loading failure leaves it without them (it says
-        the service isn't connected) rather than failing the request."""
+    async def _connector_tools(
+        self, specialist: Specialist, policy: ToolPolicy
+    ) -> list[Toolkit | MCPTools]:
+        """The specialist's connector tools, and the `read` tools of its `read_only_sources`.
+
+        A loading failure leaves it without them (it says the service isn't connected) rather
+        than failing the request.
+        """
         if not specialist.uses_connectors or self.tools is None:
             return []
-        try:
-            return list(await self.tools(specialist.name))
-        except Exception:
-            logger.exception("couldn't load connector tools for %s", specialist.name)
-            return []
+        loaded: list[Toolkit | MCPTools] = []
+        for name in (specialist.name, *specialist.read_only_sources):
+            try:
+                tools = list(await self.tools(name))
+            except Exception:
+                logger.exception("couldn't load %s connector tools for %s", name, specialist.name)
+                continue
+            if name != specialist.name:
+                tools = _read_only(tools, policy)
+            loaded.extend(tools)
+        return loaded
 
     async def _agent(
         self, route: Route, choice: ModelChoice, ctx: RequestContext, policy: ToolPolicy
@@ -523,7 +555,7 @@ class Router:
         metadata = CallMetadata(agent=route.specialist.name, trigger=ctx.device_type)
         model = self.model_factory(choice.alias, metadata)
         agent = route.specialist.factory(ctx, model, self.db)
-        extra = await self._connector_tools(route.specialist)
+        extra = await self._connector_tools(route.specialist, policy)
         if extra:
             own = agent.tools if isinstance(agent.tools, list) else []
             agent.tools = [*own, *extra]

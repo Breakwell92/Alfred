@@ -12,6 +12,9 @@ A turn that reaches a gated tool pauses: the reply asks for the OK and carries t
 `confirmation`. While one is pending, a plain "yes" or "no" as the session's next message
 answers it; anything else cancels a pending `write` confirmation and is routed as usual
 (docs/decisions/0013-confirmation-gating.md).
+
+A message that is a routine's trigger phrase ("movie time") runs that routine's saved steps
+instead of going to the router: no model, no cost (docs/decisions/0021-routines.md).
 """
 
 import asyncio
@@ -64,6 +67,8 @@ from alfred_server.models.gateway import (
     ModelAlias,
     gateway_model,
 )
+from alfred_server.routines.models import RoutineResult
+from alfred_server.routines.service import RoutineService, get_routine_service
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +145,11 @@ def confirmation_service_dependency() -> ConfirmationService:
 def tool_loader_dependency() -> ToolLoader:
     """Connector tools for specialists that use them (Spotify for media). Overridden in tests."""
     return get_connector_service().load_tools
+
+
+def routine_service_dependency() -> RoutineService:
+    """Saved routines, matched before the router. Overridden in tests."""
+    return get_routine_service()
 
 
 def router_dependency(
@@ -252,6 +262,26 @@ async def _answer(
         ) from exc
 
 
+async def run_routine(
+    text: str, ctx: RequestContext, routines: RoutineService
+) -> RoutineResult | None:
+    """Run the routine `text` triggers, or None to route it as usual.
+
+    Raises `ConfirmationsUnavailableError` when a routine matched but the tool policy can't be
+    read (no step runs unchecked).
+    """
+    return await routines.match_and_run(text, ctx.device_type)
+
+
+async def _routine(
+    body: ChatRequest, ctx: RequestContext, routines: RoutineService
+) -> RoutineResult | None:
+    try:
+        return await run_routine(body.text, ctx, routines)
+    except ConfirmationsUnavailableError as exc:
+        raise _unavailable(exc) from exc
+
+
 def _public(c: PendingConfirmation | None) -> dict[str, Any] | None:
     return None if c is None else c.public()
 
@@ -262,6 +292,7 @@ async def chat(
     settings: Annotated[Settings, Depends(get_settings)],
     agent_router: Annotated[Router, Depends(router_dependency)],
     confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
+    routines: Annotated[RoutineService, Depends(routine_service_dependency)],
 ) -> ChatResponse:
     ctx = _context(body, settings)
     answered = await _answer(body, ctx, confirmations, agent_router)
@@ -271,6 +302,9 @@ async def chat(
             session_id=ctx.session_id,
             confirmation=_public(answered.confirmation),
         )
+    ran = await _routine(body, ctx, routines)
+    if ran is not None:
+        return ChatResponse(reply=ran.reply, session_id=ctx.session_id)
     route = await _route(body, ctx, agent_router)
     # Agno reports model failures as an errored run (AgentRunError); the bare except is a
     # backstop for anything it lets escape. Storage was checked by `ready_agent_db`.
@@ -298,11 +332,15 @@ async def chat_stream(
     agent_router: Annotated[Router, Depends(router_dependency)],
     budget: Annotated[ChatBudget, Depends(budget_dependency)],
     confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
+    routines: Annotated[RoutineService, Depends(routine_service_dependency)],
 ) -> StreamingResponse:
     ctx = _context(body, settings)
     answered = await _answer(body, ctx, confirmations, agent_router)
+    events: AsyncIterator[str]
     if answered is not None:
         events = _answered_events(answered, budget, ctx)
+    elif (ran := await _routine(body, ctx, routines)) is not None:
+        events = _routine_events(ran, ctx)
     else:
         route = await _route(body, ctx, agent_router)
         events = _sse_events(agent_router, budget, route, body.text, ctx)
@@ -331,6 +369,20 @@ async def _answered_events(
             "session_id": ctx.session_id,
             "turn": turn,
             "confirmation": _public(answered.confirmation),
+        },
+    )
+
+
+async def _routine_events(ran: RoutineResult, ctx: RequestContext) -> AsyncIterator[str]:
+    """A routine run as a stream: the whole reply as one token, then `done`."""
+    yield _sse("token", {"text": ran.reply})
+    yield _sse(
+        "done",
+        {
+            "reply": ran.reply,
+            "session_id": ctx.session_id,
+            "turn": ran.turn_info(),
+            "confirmation": None,
         },
     )
 

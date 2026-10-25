@@ -22,6 +22,7 @@ from alfred_server.connectors.models import (
     Connector,
     Credentials,
     OAuth2Config,
+    ToolError,
     ToolMeta,
 )
 
@@ -303,7 +304,7 @@ class SpotifyTools(Toolkit):
         try:
             body = await self.client.request("GET", "/me/player")
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         item = (body or {}).get("item")
         if not body or not isinstance(item, dict):
             return "Nothing is playing on Spotify."
@@ -324,7 +325,7 @@ class SpotifyTools(Toolkit):
         try:
             devices = await self._devices()
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         if not devices:
             return NO_DEVICE
         parts = [
@@ -347,7 +348,7 @@ class SpotifyTools(Toolkit):
         try:
             items = (await self._search(query, kind)).get(kind) or []
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         if not items:
             return f"Spotify found no {kind}s for {query}."
         return f"Spotify {kind}s for {query}: " + "; ".join(_describe(i) for i in items) + "."
@@ -361,7 +362,7 @@ class SpotifyTools(Toolkit):
         try:
             names = [str(p.get("name")) for p in await self._playlists()]
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         if not names:
             return "You don't have any Spotify playlists."
         return "Your playlists: " + "; ".join(names) + "."
@@ -397,12 +398,12 @@ class SpotifyTools(Toolkit):
             if query:
                 item, own = await self._find(query, kind, mine)
                 if item is None and mine:
-                    return (
+                    return ToolError(
                         f"I can't find {query} in your Spotify playlists. Spotify hides some of "
                         "its own playlists from apps; follow or copy it to make it findable."
                     )
                 if item is None or not item.get("uri"):
-                    return f"I couldn't find {query} on Spotify."
+                    return ToolError(f"I couldn't find {query} on Spotify.")
                 uri = str(item["uri"])
                 body = {"uris": [uri]} if item.get("type") == "track" else {"context_uri": uri}
                 what = f"Playing {_describe(item, owner=not own)}"
@@ -411,7 +412,7 @@ class SpotifyTools(Toolkit):
             )
             return what + self._on(target) + "."
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
 
     async def spotify_pause(self) -> str:
         """Pause Spotify.
@@ -422,7 +423,7 @@ class SpotifyTools(Toolkit):
         try:
             await self.client.request("PUT", "/me/player/pause")
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         return "Paused."
 
     async def spotify_next(self) -> str:
@@ -434,7 +435,7 @@ class SpotifyTools(Toolkit):
         try:
             await self.client.request("POST", "/me/player/next")
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         return "Skipped to the next track."
 
     async def spotify_previous(self) -> str:
@@ -446,7 +447,7 @@ class SpotifyTools(Toolkit):
         try:
             await self.client.request("POST", "/me/player/previous")
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         return "Back to the previous track."
 
     async def spotify_volume(self, percent: int, device: str | None = None) -> str:
@@ -469,7 +470,7 @@ class SpotifyTools(Toolkit):
             )
             return f"Volume set to {percent}%{self._on(target)}."
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
 
     async def spotify_shuffle(self, on: bool) -> str:
         """Turn Spotify's shuffle on or off.
@@ -485,7 +486,7 @@ class SpotifyTools(Toolkit):
                 "PUT", "/me/player/shuffle", params={"state": "true" if on else "false"}
             )
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         return "Shuffle on." if on else "Shuffle off."
 
     async def spotify_repeat(self, mode: RepeatMode) -> str:
@@ -500,7 +501,7 @@ class SpotifyTools(Toolkit):
         try:
             await self.client.request("PUT", "/me/player/repeat", params={"state": mode})
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
         return {
             "track": "Repeating this track.",
             "context": "Repeating.",
@@ -519,13 +520,13 @@ class SpotifyTools(Toolkit):
         try:
             target = await self._device(device)
             if target is None:
-                return "Which device should I move it to?"
+                return ToolError("Which device should I move it to?")
             await self.client.request(
                 "PUT", "/me/player", json={"device_ids": [self._id(target)], "play": True}
             )
             return f"Moved to {target.get('name') or device}."
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
 
     async def spotify_queue(self, query: str) -> str:
         """Add a song to the Spotify queue, to play after the current one.
@@ -539,13 +540,13 @@ class SpotifyTools(Toolkit):
         try:
             tracks = (await self._search(query, "track", limit=1)).get("track") or []
             if not tracks or not tracks[0].get("uri"):
-                return f"I couldn't find {query} on Spotify."
+                return ToolError(f"I couldn't find {query} on Spotify.")
             await self.client.request(
                 "POST", "/me/player/queue", params={"uri": str(tracks[0]["uri"])}
             )
             return f"Queued {_describe(tracks[0])}."
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
 
     async def spotify_like_current(self) -> str:
         """Save the song that's playing to Dan's Liked Songs.
@@ -561,7 +562,7 @@ class SpotifyTools(Toolkit):
             await self.client.request("PUT", "/me/tracks", json={"ids": [item["id"]]})
             return f"Added {_describe(item)} to your Liked Songs."
         except SpotifyError as e:
-            return e.message
+            return ToolError(e.message)
 
 
 def build_spotify_toolkit(creds: Credentials) -> Toolkit:

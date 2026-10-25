@@ -6,6 +6,26 @@
 # Echo / general agent (alfred_server/agents/echo.py). Same format as the real tool.
 get_time: "{now:%H:%M} on {now:%A} {now.day} {now:%B %Y} ({timezone})"
 
+# Routines (alfred_server/connectors/builtin/routines.py). Same format as the real tools.
+list_step_tools: >-
+  [{"connector":"home_assistant","tool":"ha_turn_on","description":"Turn devices on or activate
+  a scene.","asks_first":false,"parameters":{"type":"object","properties":{"domain":{"type":"string",
+  "enum":["light","switch","fan","media_player","scene","input_boolean","climate","cover"]},
+  "name":{"type":"string"},"area":{"type":"string"},"floor":{"type":"string"}},"required":["domain"]}},
+  {"connector":"home_assistant","tool":"ha_turn_off","description":"Turn devices off.",
+  "asks_first":false,"parameters":{"type":"object","properties":{"domain":{"type":"string"},
+  "name":{"type":"string"},"area":{"type":"string"},"floor":{"type":"string"}},"required":["domain"]}},
+  {"connector":"home_assistant","tool":"ha_set_light","description":"Set light brightness or
+  colour.","asks_first":false,"parameters":{"type":"object","properties":{"name":{"type":"string"},
+  "area":{"type":"string"},"floor":{"type":"string"},"brightness":{"type":"integer"},
+  "color":{"type":"string"}},"required":[]}},
+  {"connector":"spotify","tool":"spotify_play","description":"Play music.","asks_first":false,
+  "parameters":{"type":"object","properties":{"query":{"type":"string"},"device":{"type":"string"}},
+  "required":[]}}]
+save_routine: "Saved the {name} routine. Say '{name}' to run it."
+list_routines: "movie time: say movie time; it will set the lounge lights and turn on media_player TV."
+delete_routine: "Deleted the {name} routine."
+
 # Weather (pending)
 get_weather:
   location: Home
@@ -27,6 +47,10 @@ ha_get_state: |
     areas: Lounge
     attributes:
       brightness: '100'
+  - names: Lounge TV
+    domain: media_player
+    state: 'off'
+    areas: Lounge
   - names: Bedroom Lights
     domain: light
     state: 'on'

@@ -3,7 +3,8 @@
 Reply text is spoken as it streams: tokens go to the TTS, which starts on the first sentence
 (or clause) while the model is still writing. A turn ends with `turn.metadata` and then
 `reply.audio.end`, or with one `error`. See docs/protocol.md and
-docs/decisions/0015-voice-gateway.md.
+docs/decisions/0015-voice-gateway.md. A transcript that is a routine's trigger phrase runs the
+routine instead of the router (docs/decisions/0021-routines.md).
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from alfred_server.agents.router import (
     ToolLoader,
 )
 from alfred_server.agents.storage import StorageUnavailableError, check_agent_db
-from alfred_server.chat import Answered, ChatBudget, answer_pending, turn_info
+from alfred_server.chat import Answered, ChatBudget, answer_pending, run_routine, turn_info
 from alfred_server.config import Settings
 from alfred_server.confirmations.models import PendingConfirmation, can_approve
 from alfred_server.confirmations.service import (
@@ -42,6 +43,8 @@ from alfred_server.confirmations.service import (
     denied_reply,
 )
 from alfred_server.models.gateway import GatewayNotConfiguredError
+from alfred_server.routines.models import RoutineResult
+from alfred_server.routines.service import RoutineService
 from alfred_server.voice.gateway.protocol import ConfirmReply, audio_frame, message
 from alfred_server.voice.gateway.yes_no import classify_yes_no
 from alfred_server.voice.stt import AudioTooLongError, Partial, SpeechToText
@@ -63,6 +66,8 @@ class VoiceServices:
     stt: SpeechToText | None
     tts: TextToSpeech | None
     voice: VoiceConfig | None
+    # Saved routines, matched before the router. None: no routines (some tests).
+    routines: RoutineService | None = None
 
     @property
     def voice_ready(self) -> bool:
@@ -210,6 +215,12 @@ class VoiceTurn:
         if answered is not None:
             await self._speak_answer(answered)
             return
+        if self.services.routines is not None:
+            # Shielded like an answer: once a routine starts, all its steps run.
+            ran = await _detached(run_routine(text, self.ctx, self.services.routines))
+            if ran is not None:
+                await self._speak_routine(ran)
+                return
         route = await router.route(text, self.ctx)
         await self._stream(router, route, text)
 
@@ -302,7 +313,21 @@ class VoiceTurn:
             )
         await self._finish(done, answered.confirmation)
 
-    async def _finish(self, done: Done | None, confirmation: PendingConfirmation | None) -> None:
+    async def _speak_routine(self, ran: RoutineResult) -> None:
+        speaker = _Speaker(self)
+        try:
+            await speaker.say(ran.reply)
+            await speaker.finish()
+        finally:
+            speaker.close()
+        await self._finish(None, None, ran.turn_info())
+
+    async def _finish(
+        self,
+        done: Done | None,
+        confirmation: PendingConfirmation | None,
+        info: dict[str, Any] | None = None,
+    ) -> None:
         if confirmation is not None:
             await self.send(
                 "confirm.request",
@@ -313,7 +338,8 @@ class VoiceTurn:
             )
         self.timings.done = now()
         timings = self.timings.as_dict()
-        info = await turn_info(done, self.services.budget) if done is not None else {}
+        if info is None:
+            info = await turn_info(done, self.services.budget) if done is not None else {}
         await self.send("turn.metadata", **info, timings=timings)
         logger.info(
             "voice turn %s: %s",

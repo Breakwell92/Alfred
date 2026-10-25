@@ -42,6 +42,14 @@ the agent runs without them, so its instructions should say what to tell Dan whe
 tools (e.g. "Spotify isn't connected yet"). Look up a tool's risk or
 privacy with `get_connector_service().tool_meta("tool_name")`.
 
+A tool that reports failures as a sentence rather than raising (as the Home Assistant and Spotify
+toolkits do) should return them as `ToolError("…")` (`connectors/models.py`). The agent sees the
+same string; routines ([ADR 0021](decisions/0021-routines.md)) use the type to report the step as
+failed.
+
+Tools whose declared risk is `read` can also be lent to another specialist read-only:
+`Specialist.read_only_sources` (used by `routines`, which looks names up but must never act).
+
 ## Risk and confirmations
 
 The router gates every agent's tools by risk ([ADR 0013](decisions/0013-confirmation-gating.md)):
@@ -56,7 +64,9 @@ it runs without asking unless Dan tightens it. The registry rejects a `default_t
 
 Give every `write` or `irreversible` tool a `confirm_summary`: a sentence starting with a verb
 that is formatted with the call's arguments and read back to Dan, e.g.
-`"Send an email to {to}: '{subject}'"`. It's also used in "OK, I won't send an email to …", so
+`"Send an email to {to}: '{subject}'"`.
+When a template can't express the summary (e.g. `save_routine` reading back every step), set
+`ToolMeta.summarise` to a function of the policy and the call's arguments instead. It's also used in "OK, I won't send an email to …", so
 start it with a capital verb and no full stop. The dummy `test_messages` connector
 (`connectors/builtin/test_messages.py`) is a worked example; set `ALFRED_TEST_TOOLS_ENABLED=true` to give it to the general agent and try the flow in `/ui/chat`.
 

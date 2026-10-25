@@ -17,6 +17,11 @@ from alfred_server.agents.context import RequestContext
 from alfred_server.agents.echo import build_echo_agent
 from alfred_server.agents.home import HOME_AGENT_NAME, build_home_agent
 from alfred_server.agents.media import MEDIA_AGENT_NAME, build_media_agent
+from alfred_server.agents.routines import (
+    ROUTINE_SOURCES,
+    ROUTINES_AGENT_NAME,
+    build_routines_agent,
+)
 
 # Handles anything no other specialist claims. Always registered.
 GENERAL = "general"
@@ -33,6 +38,10 @@ class Specialist:
     # True if the agent's tools come from connectors (`Connector.specialist == name`): the
     # router loads them per request and adds them to the factory's agent before gating.
     uses_connectors: bool = False
+    # Other specialists whose connector tools it also gets, only their `read` ones (by declared
+    # risk, so not even tools that run without asking). For `routines`, which looks names up
+    # but must never act. Its own connectors' tools are loaded in full.
+    read_only_sources: tuple[str, ...] = ()
 
 
 class SpecialistRegistry:
@@ -68,12 +77,28 @@ def _home_factory(ctx: RequestContext, model: Model, db: BaseDb | AsyncBaseDb) -
     return build_home_agent(ctx, db=db, model=model)
 
 
+def _routines_factory(ctx: RequestContext, model: Model, db: BaseDb | AsyncBaseDb) -> Agent:
+    return build_routines_agent(ctx, db=db, model=model)
+
+
 @lru_cache
 def get_registry() -> SpecialistRegistry:
     """The process-wide registry with every specialist registered."""
     registry = SpecialistRegistry()
     registry.register(
         Specialist(GENERAL, "general questions, chat and anything else", _general_factory)
+    )
+    # Second, before media and home: `local-router` reads the list in order, and with routines
+    # last it sent "something relaxing for dinner" to home and "activate movie time" here.
+    # Run the full eval set after moving or rewording it.
+    registry.register(
+        Specialist(
+            ROUTINES_AGENT_NAME,
+            "setting up a new routine ('when I say X, do Y'), or listing or deleting routines",
+            _routines_factory,
+            uses_connectors=True,
+            read_only_sources=ROUTINE_SOURCES,
+        )
     )
     registry.register(
         Specialist(

@@ -60,7 +60,7 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 | `reply.audio.start` | `turn_id`, `sample_rate` (24000), `encoding` (`pcm_s16le`), `channels` (1) | Before the first audio frame of a turn. |
 | *(binary)* | | Reply audio, see above. |
 | `confirm.request` | `turn_id`, `id`, `summary`, `tier` (`write` / `irreversible`), `expires_at` | The reply asked for an OK before running a tool. See below. |
-| `turn.metadata` | `turn_id`, `specialist`, `alias`, `tier` (`local` / `cloud`), `reason`, `budget_code`, `budget_tier`, `tools`, `input_tokens`, `output_tokens`, `cost_gbp`, `timings` | How the turn ran. Routing fields are absent when no agent ran (e.g. "No" to a confirmation). |
+| `turn.metadata` | `turn_id`, `specialist`, `alias`, `tier` (`local` / `cloud`), `reason`, `budget_code`, `budget_tier`, `tools`, `input_tokens`, `output_tokens`, `cost_gbp`, `timings` | How the turn ran. Routing fields are absent when no agent ran (e.g. "No" to a confirmation). When the transcript was a routine's phrase, `specialist` is `routine`, `alias` is `none`, there are no tokens, and `routine` `{id, name, ms, steps: [{index, tool, ok, message, ms, skipped}]}` says what ran ([ADR 0021](decisions/0021-routines.md)). |
 | `reply.audio.end` | `turn_id` | **Last message of a successful turn.** |
 | `turn.cancelled` | `turn_id` | Last message of a cancelled turn. |
 | `error` | `turn_id`?, `code`, `message` | With a `turn_id` it's the last message of that turn. Without one, the connection carries on. |

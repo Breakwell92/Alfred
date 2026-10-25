@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from agno.tools import Toolkit
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 AuthType = Literal["oauth2", "api_key", "local", "none"]
 # What a tool can do, for confirmation gating (STU-57): `read` never changes anything,
@@ -22,6 +22,17 @@ Risk = Literal["read", "write", "irreversible"]
 Privacy = Literal["cloud_ok", "local_only"]
 # `connected` is the only healthy status: tools load only then.
 Status = Literal["disabled", "needs_auth", "connected", "needs_reauth", "error"]
+
+
+class ToolError(str):
+    """A tool's answer saying it failed or did nothing, e.g. "Home Assistant isn't reachable".
+
+    It's still a plain sentence for the agent to say; routines (docs/decisions/0021-routines.md)
+    use the type to report the step as failed. Tools that never raise return one of these on
+    every failure path.
+    """
+
+    __slots__ = ()
 
 
 class ToolMeta(BaseModel):
@@ -39,6 +50,9 @@ class ToolMeta(BaseModel):
     # controls are honestly `write` but run without asking. Never higher than `risk` (the
     # registry checks). See docs/decisions/0013-confirmation-gating.md.
     default_tier: Risk | None = None
+    # Builds the confirmation summary when a template can't (e.g. `save_routine` reading back
+    # each of the routine's steps): called with the `ToolPolicy` and the call's arguments.
+    summarise: Callable[[Any, Mapping[str, Any]], str] | None = Field(default=None, exclude=True)
 
     @property
     def tier(self) -> Risk:

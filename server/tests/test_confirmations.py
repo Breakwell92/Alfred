@@ -292,6 +292,19 @@ def test_a_proof_for_another_answer_is_rejected(harness: ChatHarness) -> None:
     assert_not_approved(harness)
 
 
+def test_an_out_of_range_timestamp_is_403_not_503(harness: ChatHarness) -> None:
+    c = irreversible_pending(harness)
+    app = FakeApp()
+    app.pair(harness.devices)
+    proof = app.proof(c["id"], at=harness.clock())
+    proof["issued_at"] = 10**20
+
+    response = answer(harness, c["id"], approve=True, channel="app_ui", proof=proof)
+
+    assert response.status_code == 403
+    assert_not_approved(harness)
+
+
 def test_an_unpaired_key_is_rejected(harness: ChatHarness) -> None:
     c = irreversible_pending(harness)
     stranger = FakeApp()
@@ -341,7 +354,10 @@ def test_tightening_a_tool_while_it_waits_raises_the_bar(harness: ChatHarness) -
 def test_relaxing_a_tool_while_it_waits_does_not_lower_the_bar(harness: ChatHarness) -> None:
     set_risk(harness, "irreversible")
     c = ask_to_send(harness, session_id="s1")["confirmation"]
-    set_risk(harness, "read")
+    # As the server CLI would (the API refuses to relax an irreversible tool).
+    harness.confirmations.set_override(
+        "test_messages", "send_test_message", "read", allow_relaxing_irreversible=True
+    )
 
     said = harness.post("/chat", text="yes", session_id="s1").json()
 
@@ -461,6 +477,27 @@ def test_removing_an_override(harness: ChatHarness) -> None:
     body = set_risk(harness, None).json()
 
     assert (body["override"], body["effective"]) == (None, "write")
+
+
+@pytest.mark.parametrize("risk", ["read", "write", None])
+def test_the_api_cannot_relax_an_irreversible_tool(harness: ChatHarness, risk: str | None) -> None:
+    # Otherwise the shared token could relax a tool and approve it by text (ADR 0014).
+    assert set_risk(harness, "irreversible").status_code == 200
+
+    response = set_risk(harness, risk)
+
+    assert response.status_code == 403
+    assert "on the server" in response.json()["detail"]
+    rows = harness.client.get("/settings/permissions", headers=AUTH).json()
+    row = next(r for r in rows if r["tool"] == "send_test_message")
+    assert row["effective"] == "irreversible"
+
+
+def test_the_api_can_still_tighten_and_relax_below_irreversible(harness: ChatHarness) -> None:
+    assert set_risk(harness, "read").status_code == 200
+    assert set_risk(harness, "write").status_code == 200
+    assert set_risk(harness, "irreversible").status_code == 200
+    assert set_risk(harness, "irreversible").status_code == 200  # no change is not a relax
 
 
 def test_permissions_for_unknown_tools_are_404(harness: ChatHarness) -> None:

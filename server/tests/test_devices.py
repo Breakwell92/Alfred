@@ -172,6 +172,17 @@ def test_stale_or_future_approvals_fail(devices: DeviceService, clock: Clock) ->
         devices.verify_approval(signed, "c1", approve=True)
 
 
+@pytest.mark.parametrize("issued_at", [10**20, -(10**20), 2**63], ids=["huge", "negative", "int64"])
+def test_out_of_range_timestamps_fail_cleanly(
+    devices: DeviceService, clock: Clock, issued_at: int
+) -> None:
+    app = FakeApp()
+    app.pair(devices)
+    bad = proof(app, clock).model_copy(update={"issued_at": issued_at})
+    with pytest.raises(ApprovalProofError):
+        devices.verify_approval(bad, "c1", approve=True)
+
+
 def test_revoked_devices_fail(devices: DeviceService, clock: Clock) -> None:
     app = FakeApp()
     app.pair(devices)

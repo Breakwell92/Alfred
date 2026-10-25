@@ -51,11 +51,18 @@ Either way, registering a credential can't be allowed on the API token alone, or
 
 Denials need no proof: saying no is always safe.
 
+**Relaxing an `irreversible` tool needs the server.**
+- Otherwise the token holder could `PUT /settings/permissions/{connector}/{tool}` `{"risk": "read"}` (or `write`, or reset an override) and then run the tool ungated or with a typed yes.
+- So the API answers 403 to any change that takes a tool's effective tier from `irreversible` to lower (`ConfirmationService.set_override`, `IrreversibleRelaxError`).
+- `python -m alfred_server.confirmations set <connector> <tool> <read|write|irreversible|reset>` can do it, and `list` shows every tier.
+- Tightening, and relaxing anything below `irreversible`, still work over the API.
+- A device-signed permission change was considered and not chosen. It needs replay protection (a change, unlike a confirmation, can be repeated), and the app has no permissions screen.
+
 **Biometrics later.** The key has no user-authentication requirement yet. When the confirmation screen is built, it adds a BiometricPrompt and an auth-bound key, which means re-pairing.
 
 ## Consequences
 
-- The shared API token can no longer approve an `irreversible` action. That needs the private key on a paired phone.
+- The shared API token can no longer approve an `irreversible` action, or relax one so it no longer needs approving. Approving needs the private key on a paired phone, and relaxing needs a shell on the server.
 - **Root of trust is a shell on the server.** Anyone who can run the CLI there can pair a device, which is no worse than what they can already do on that box.
 - The app pairs from Settings → Approvals with the saved server URL and token. Re-pairing registers the same key under a new device id. Revoke the old id with the CLI if it matters.
 - **Clock skew.** A phone more than 5 minutes off the server's clock can't approve. Both normally use network time.

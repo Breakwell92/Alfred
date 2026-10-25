@@ -21,6 +21,7 @@ from alfred_server.confirmations.models import Channel, Tier, can_approve
 from alfred_server.confirmations.service import (
     ConfirmationService,
     ConfirmationsUnavailableError,
+    IrreversibleRelaxError,
     cancel_paused_run,
     denied_reply,
 )
@@ -199,13 +200,22 @@ async def put_permission(
     connector_id: str, tool: str, body: PermissionChange, service: Service
 ) -> ToolPermission:
     """Relax or tighten one tool (`{"risk": "read" | "write" | "irreversible"}`), or reset it
-    to its default (`{"risk": null}`). Applies from the next request."""
+    to its default (`{"risk": null}`). Applies from the next request.
+
+    A tool that's `irreversible` now can't be relaxed here (403): the shared API token would
+    otherwise get round signed approvals. Use `python -m alfred_server.confirmations set`."""
     connector = service.registry.get(connector_id)
     meta = next((t for t in connector.tools if t.name == tool), None) if connector else None
     if connector is None or meta is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such connector tool")
     try:
         await asyncio.to_thread(service.set_override, connector_id, tool, body.risk)
+    except IrreversibleRelaxError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "An irreversible tool can only be relaxed on the server "
+            "(python -m alfred_server.confirmations set).",
+        ) from exc
     except Exception as exc:
         raise _unavailable(exc) from exc
     return ToolPermission(

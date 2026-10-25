@@ -72,6 +72,7 @@ class WakeWordControllerTest {
             scope = backgroundScope,
             workDispatcher = dispatcher,
             clock = { testScheduler.currentTime },
+            monotonicClock = { testScheduler.currentTime },
             endOfSpeech = { endOfSpeech },
         )
     }

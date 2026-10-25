@@ -21,7 +21,6 @@ class FakeWakeWordModels(var defaultScore: Float = 0f, var melValue: Float = 7f)
     val melInputs = mutableListOf<FloatArray>()
     val embedInputs = mutableListOf<Array<FloatArray>>()
     val scoreInputs = mutableListOf<Array<FloatArray>>()
-    var closed = false
 
     override fun melSpectrogram(samples: FloatArray): Array<FloatArray> {
         melInputs += samples
@@ -33,12 +32,27 @@ class FakeWakeWordModels(var defaultScore: Float = 0f, var melValue: Float = 7f)
         return FloatArray(EMBEDDING_SIZE) { embedInputs.size.toFloat() }
     }
 
+    /** Calls in order ("score-start", "score-end", "close"), from whichever thread made them. */
+    val calls: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+
+    /** If set, [score] waits on it: lets a test hold inference "in progress". */
+    @Volatile
+    var holdScore: java.util.concurrent.CountDownLatch? = null
+
     override fun score(features: Array<FloatArray>): Float {
+        calls += "score-start"
+        holdScore?.await()
         scoreInputs += features
+        calls += "score-end"
         return scores.removeFirstOrNull() ?: defaultScore
     }
 
+    @Volatile
+    var closed = false
+        private set
+
     override fun close() {
+        calls += "close"
         closed = true
     }
 }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -94,7 +95,10 @@ class WakeWordController(
     private val loadModels: (StockWakeWord) -> WakeWordModels,
     private val scope: CoroutineScope,
     private val workDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    /** Wall time, for event timestamps. */
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Monotonic time, for the detector's cooldown (wall time can jump). */
+    private val monotonicClock: () -> Long = { System.nanoTime() / 1_000_000 },
     private val endOfSpeech: () -> EndOfSpeechDetector = { EnergyEndOfSpeech() },
     private val retryMillis: Long = RETRY_MILLIS,
     private val falseAcceptWindowMillis: Long = FALSE_ACCEPT_WINDOW_MILLIS,
@@ -111,7 +115,12 @@ class WakeWordController(
     private var job: Job? = null
     private var clearWakeJob: Job? = null
 
-    /** The detector for one model, kept while that model stays selected. */
+    /**
+     * The detector for one model, kept while that model stays selected. Owned by the loop:
+     * set on [workDispatcher] as soon as a model loads (so a cancelled load isn't lost) and
+     * closed in the loop's `finally`, once nothing can still be running inference on it.
+     */
+    @Volatile
     private var loaded: Pair<StockWakeWord, Loaded>? = null
 
     private class Loaded(val models: WakeWordModels, val detector: WakeWordDetector)
@@ -125,7 +134,10 @@ class WakeWordController(
     /** Starts listening (as settings and phone state allow) until [stop]. Idempotent. */
     fun start() {
         if (job?.isActive == true) return
+        // A stopped loop may still be finishing a chunk and closing its models: wait for it.
+        val previous = job
         job = scope.launch {
+            previous?.join()
             try {
                 modes().collectLatest { mode ->
                     when (mode) {
@@ -135,17 +147,19 @@ class WakeWordController(
                 }
             } finally {
                 _state.value = WakeState.Off
+                // Runs only after any inference in progress has returned (withContext waits for
+                // its block), so the native sessions are never closed while in use.
+                val models = loaded?.second?.models
+                loaded = null
+                if (models != null) withContext(NonCancellable + workDispatcher) { models.close() }
             }
         }
     }
 
+    /** Stops listening. The models are closed as soon as the chunk being scored (if any) is done. */
     fun stop() {
         job?.cancel()
-        job = null
         _state.value = WakeState.Off
-        val models = loaded?.second?.models
-        loaded = null
-        if (models != null) scope.launch(workDispatcher) { models.close() }
     }
 
     fun pause() {
@@ -221,15 +235,16 @@ class WakeWordController(
 
     private suspend fun detectorFor(model: StockWakeWord): WakeWordDetector {
         loaded?.let { (current, value) -> if (current == model) return value.detector }
-        val previous = loaded?.second?.models
-        loaded = null
-        val value = withContext(workDispatcher) {
-            previous?.close()
+        // Nothing else uses the old models now: collectLatest waits for the previous listen().
+        return withContext(workDispatcher) {
+            loaded?.second?.models?.close()
+            loaded = null
             val models = loadModels(model)
-            Loaded(models, WakeWordDetector(models, clock = clock))
+            val value = Loaded(models, WakeWordDetector(models, clock = monotonicClock))
+            // Recorded here, on the worker, so the loop's finally closes it even if we're cancelled.
+            loaded = model to value
+            value.detector
         }
-        loaded = model to value
-        return value.detector
     }
 
     private fun onWake(model: StockWakeWord, detection: WakeDetection) {

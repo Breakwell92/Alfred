@@ -39,9 +39,9 @@ The orb's debug screen (debug builds only) drives every orb state with fake spee
 adb shell am start -n com.alfred.app/com.alfred.app.debug.OrbDebugActivity
 ```
 
-The APK lands in `app/build/outputs/apk/debug/app-debug.apk` (arm64 phones and the x86_64 emulator only: ONNX Runtime's native code is ~35 MB per ABI).
+The APK lands in `app/build/outputs/apk/debug/app-debug.apk` (arm64 phones and the x86_64 emulator only: ONNX Runtime's native code is ~35 MB per ABI). CI also uploads it as the `alfred-debug-apk` artifact.
 
-`OnnxWakeWordModelsTest` runs the real wake word models on desktop ONNX Runtime. On Windows it's skipped under Android Studio's JBR, whose old `msvcp140.dll` crashes ONNX Runtime; to run it, make the test JVM another JDK with an init script containing `allprojects { tasks.withType(Test).configureEach { executable = "C:/Program Files/Java/jdk-25/bin/java.exe" } }` and pass `--init-script <file>`. CI runs it on Linux. CI also uploads it as the `alfred-debug-apk` artifact.
+`OnnxWakeWordModelsTest` runs the real wake word models on desktop ONNX Runtime. On Windows it's skipped under Android Studio's JBR, whose old `msvcp140.dll` crashes ONNX Runtime; to run it, make the test JVM another JDK with an init script containing `allprojects { tasks.withType(Test).configureEach { executable = "C:/Program Files/Java/jdk-25/bin/java.exe" } }` and pass `--init-script <file>`. CI runs it on Linux.
 
 The default server URL baked into the app is `alfred.serverUrl` in `gradle.properties` (`http://glados:8000`, the server's Tailscale MagicDNS name). Override it with `-Palfred.serverUrl=http://…` or in `~/.gradle/gradle.properties`. It can also be changed in the app's Settings.
 

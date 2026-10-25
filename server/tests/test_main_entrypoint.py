@@ -23,6 +23,21 @@ def test_main_runs_uvicorn_with_settings(
     assert calls == [
         (
             ("alfred_server.main:app",),
-            {"host": "0.0.0.0", "port": 9001, "log_level": "warning", "loop": loop},
+            {
+                "host": "0.0.0.0",
+                "port": 9001,
+                "log_level": "warning",
+                "log_config": entrypoint.log_config("WARNING"),
+                "loop": loop,
+            },
         )
     ]
+
+
+def test_log_config_adds_the_apps_loggers() -> None:
+    config = entrypoint.log_config("INFO")
+
+    assert config["loggers"]["alfred_server"]["level"] == "INFO"
+    assert config["loggers"]["alfred_server"]["handlers"] == ["alfred"]
+    assert config["loggers"]["uvicorn"]["handlers"] == ["default"]  # uvicorn's own kept
+    assert config["handlers"]["alfred"]["formatter"] == "alfred"

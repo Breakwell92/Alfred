@@ -18,6 +18,8 @@ from alfred_server.connectors.api import router as connector_router
 from alfred_server.connectors.refresher import TokenRefresher
 from alfred_server.connectors.service import get_connector_service
 from alfred_server.ui.routes import router as ui_router
+from alfred_server.voice.gateway.hub import DeviceHub
+from alfred_server.voice.gateway.routes import router as device_socket_router
 
 # Cheap to import: the TTS engines themselves are imported when they load.
 from alfred_server.voice.tts import LocalTTS, get_tts, voices_response
@@ -85,7 +87,8 @@ def tts_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> Loca
 
 def create_app() -> FastAPI:
     # Interactive docs and the OpenAPI schema are off. The only unauthenticated routes are
-    # `/health`, the chat page's static files and the OAuth callback (see below).
+    # `/health`, the chat page's static files and the OAuth callback (see below); the device
+    # WebSocket authenticates itself.
     app = FastAPI(
         title="Alfred",
         version=__version__,
@@ -131,6 +134,11 @@ def create_app() -> FastAPI:
     # The only other open route: the OAuth provider redirects the browser here, so it can't
     # send the API token. It accepts only a one-time state from the protected /auth/start.
     app.include_router(connector_callback_router)
+
+    # The device WebSocket checks the API token itself (header or `hello`): FastAPI's bearer
+    # dependency doesn't run on WebSockets. See alfred_server/voice/gateway/routes.py.
+    app.state.device_hub = DeviceHub()
+    app.include_router(device_socket_router)
     return app
 
 

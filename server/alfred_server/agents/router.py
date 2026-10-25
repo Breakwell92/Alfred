@@ -230,7 +230,8 @@ class Done:
     """The stream finished; `reply` is the whole reply, announcement included.
 
     `tools` names the tool calls the final run made, `metrics` its token counts (if any).
-    `confirmation` is set when the run paused before a gated tool.
+    `confirmation` is set when the run paused before a gated tool. `run_id` is the Agno run
+    the reply came from, if known.
     """
 
     reply: str
@@ -238,6 +239,7 @@ class Done:
     tools: tuple[str, ...] = ()
     metrics: RunMetrics | None = None
     confirmation: PendingConfirmation | None = None
+    run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -673,7 +675,7 @@ class Router:
                 for t in attempt.paused.tools or []
                 if t.tool_name and t.result is not None and not t.requires_confirmation
             )
-            yield Done(reply, route, ran, attempt.metrics, confirmation)
+            yield Done(reply, route, ran, attempt.metrics, confirmation, attempt.run_id)
             return
 
         reply = attempt.reply()
@@ -682,7 +684,9 @@ class Router:
         run = await attempt.stored_run()
         tools = tuple(t.tool_name for t in (run.tools if run else None) or [] if t.tool_name)
         metrics = run.metrics if run is not None and run.metrics is not None else attempt.metrics
-        yield Done(_with_announcement(announcement, reply), route, tools, metrics)
+        yield Done(
+            _with_announcement(announcement, reply), route, tools, metrics, run_id=attempt.run_id
+        )
 
     # --- Confirmations -------------------------------------------------------------------------
 

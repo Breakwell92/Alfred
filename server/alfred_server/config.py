@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     tts_kokoro_device: Literal["auto", "cuda", "cpu"] = "auto"
     tts_piper_voice: str = "en_GB-alan-medium"
 
+    # Device WebSocket `/ws/device` (alfred_server.voice.gateway, docs/protocol.md).
+    # A connection that hasn't authenticated within this long is closed.
+    voice_auth_timeout_s: float = Field(default=10.0, gt=0)
+    # A connection that sends nothing (not even a `ping`) for this long is closed.
+    voice_idle_timeout_s: float = Field(default=60.0, gt=0)
+
     @field_validator("timezone")
     @classmethod
     def _known_timezone(cls, value: str) -> str:

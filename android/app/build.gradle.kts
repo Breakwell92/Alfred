@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 val defaultServerUrl = providers.gradleProperty("alfred.serverUrl").get()
@@ -34,6 +35,11 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    testOptions {
+        // Robolectric screenshot tests (Roborazzi) need the app's resources and fonts.
+        unitTests.isIncludeAndroidResources = true
     }
 
     lint {
@@ -70,6 +76,7 @@ dependencies {
     implementation(libs.onnxruntime.android)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
@@ -78,4 +85,10 @@ dependencies {
     testImplementation(libs.json)
     // Desktop ONNX Runtime, so JVM tests can run the real wake word models.
     testImplementation(libs.onnxruntime.jvm)
+    // Screenshot tests: Compose rendered on the JVM by Robolectric, compared by Roborazzi.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
 }

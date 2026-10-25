@@ -44,7 +44,7 @@ from alfred_server.confirmations.service import (
 from alfred_server.models.gateway import GatewayNotConfiguredError
 from alfred_server.voice.gateway.protocol import ConfirmReply, audio_frame, message
 from alfred_server.voice.gateway.yes_no import classify_yes_no
-from alfred_server.voice.stt import AudioTooLongError, SpeechToText
+from alfred_server.voice.stt import AudioTooLongError, Partial, SpeechToText
 from alfred_server.voice.tts import OUTPUT_SAMPLE_RATE, TextToSpeech, VoiceConfig
 
 logger = logging.getLogger(__name__)
@@ -174,7 +174,7 @@ class VoiceTurn:
         stt = self.services.stt
         assert stt is not None  # checked before the turn started
         try:
-            transcript = await stt.transcribe(chunks)
+            transcript = await stt.transcribe(chunks, on_partial=self._send_partial)
         except AudioTooLongError as exc:
             raise TurnFailed("audio_too_long", str(exc)) from exc
         except ValueError as exc:  # e.g. an odd number of PCM bytes
@@ -195,6 +195,9 @@ class VoiceTurn:
         if not text:
             raise TurnFailed("no_speech", "No speech was recognised")
         await self.respond(text)
+
+    async def _send_partial(self, partial: Partial) -> None:
+        await self.send("transcript.partial", stable=partial.stable, unstable=partial.unstable)
 
     async def respond(self, text: str) -> None:
         """Answer a pending confirmation with `text`, or route it as a new request."""

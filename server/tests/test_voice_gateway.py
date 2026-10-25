@@ -108,7 +108,9 @@ class VoiceHarness(ChatHarness):
     def __init__(self, db: RecordingDb, stt_settings: Settings | None = None) -> None:
         super().__init__(db)
         self.whisper = FakeWhisper()
-        self.stt = FasterWhisperSTT(stt_settings or Settings(_env_file=None), model=self.whisper)
+        # Partials off unless a test turns them on: each would take one of the queued texts.
+        settings = stt_settings or Settings(_env_file=None, stt_partial_interval_s=0)
+        self.stt = FasterWhisperSTT(settings, model=self.whisper)
         self.tts = FakeTTS()
         self.voice_enabled = True
         self.app.dependency_overrides[voice_stt_dependency] = lambda: (
@@ -334,6 +336,41 @@ def test_a_second_connection_replaces_the_first(harness: VoiceHarness) -> None:
 # --- Voice turns ------------------------------------------------------------------------------
 
 
+def test_hello_ok_says_how_long_an_utterance_may_be(
+    harness: VoiceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ALFRED_STT_MAX_AUDIO_S", "12.5")
+    get_settings.cache_clear()
+    with harness.connect() as ws:
+        assert hello(ws)["max_audio_s"] == 12.5
+
+
+def test_partial_transcripts_come_before_the_final_one(harness: VoiceHarness) -> None:
+    h = VoiceHarness(harness.db, Settings(_env_file=None, stt_partial_interval_s=0.5))
+    # Every partial decode and the final one: the utterance as heard so far.
+    h.hear("Set a", "Set a timer", "Set a timer for", "Set a timer for ten minutes.")
+    h.whisper.texts.extend(["Set a timer for ten minutes."] * 20)
+    h.reply_with(route_completion(level="simple", tools=0), streamed_completion("Done."))
+
+    with h.connect() as ws:
+        hello(ws)
+        turn = speak(ws, "t1")
+
+    partials = [m for m in turn.messages if m["type"] == "transcript.partial"]
+    assert partials, turn.types()
+    assert partials[0] == {
+        "type": "transcript.partial",
+        "turn_id": "t1",
+        "stable": "",
+        "unstable": "Set a",
+    }
+    first_final = turn.types().index("transcript.final")
+    assert all(i < first_final for i, m in enumerate(turn.messages) if m in partials)
+    # One decode per partial, then the final one over all the audio.
+    assert len(h.whisper.audio) == len(partials) + 1
+    assert len(h.whisper.audio[-1]) == len(fixture_pcm()) // 2
+
+
 def test_a_full_turn(harness: VoiceHarness) -> None:
     harness.hear("Set a timer for ten minutes.")
     harness.reply_with(
@@ -458,7 +495,9 @@ def test_no_speech_ends_the_turn(harness: VoiceHarness) -> None:
 
 
 def test_too_much_audio_fails_while_it_streams(harness: VoiceHarness) -> None:
-    h = VoiceHarness(harness.db, Settings(_env_file=None, stt_max_audio_s=0.5))
+    h = VoiceHarness(
+        harness.db, Settings(_env_file=None, stt_max_audio_s=0.5, stt_partial_interval_s=0)
+    )
     with h.connect() as ws:
         hello(ws)
         ws.send_json({"type": "turn.start", "turn_id": "t1"})

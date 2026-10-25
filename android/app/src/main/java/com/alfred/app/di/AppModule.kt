@@ -31,6 +31,7 @@ import com.alfred.app.data.wakeword.WakeWordController
 import com.alfred.app.data.wakeword.WakeWordSettingsRepository
 import com.alfred.app.ui.home.HomeViewModel
 import com.alfred.app.ui.home.VoiceViewModel
+import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsViewModel
 import com.alfred.app.ui.settings.WakeWordSettingsViewModel
 import java.io.File
@@ -94,6 +95,7 @@ val appModule = module {
     }
     viewModel { WakeWordSettingsViewModel(get(), get(), get()) }
     viewModel { VoiceViewModel(get(), get()) }
+    viewModel { RecordingViewModel(get()) }
     // Explicit so Koin doesn't try to inject HomeViewModel's poll interval (a defaulted Long).
     viewModel { HomeViewModel(get(), get()) }
     // Explicit so Koin doesn't try to inject the Keystore dispatcher (a defaulted parameter).

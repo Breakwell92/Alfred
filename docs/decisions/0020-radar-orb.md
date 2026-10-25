@@ -27,7 +27,7 @@ The orb is Alfred's "face": large on Home (STU-114), smaller on the Transmitting
 
 **Drawing.** One `Spacer` with `drawWithCache`, which is a `Canvas` whose setup is cached. Everything fixed is built once per size in the cache block: strokes, the dash effect, the radial and sweep gradient brushes, the measured label, and the tick sin/cos tables. The per-frame draw only rotates and scales the canvas and draws lines and circles with value-class colours and offsets, so nothing is allocated per frame. Frames come from a `withFrameNanos` loop that updates `OrbMotion` and a frame counter read only in the draw phase. A frame therefore redraws without recomposing. The core's near-white centre is a new token, `AlfredColors.accentGlow`.
 
-**Reduced motion.** When animator duration scale is 0 (`ValueAnimator.areAnimatorsEnabled()` is false, the system's "remove animations"), the frame loop doesn't run. `OrbMotion.settle` snaps to the state each time the state or level changes. The sweep stays put, the core keeps its size, the ticks don't light, and only the core's brightness shows the state and level. The setting is read when the orb enters composition.
+**Reduced motion.** When animator duration scale is 0 (`ValueAnimator.areAnimatorsEnabled()` is false, the system's "remove animations"), the frame loop doesn't run. `OrbMotion.settle` snaps to the state each time the state or level changes. The sweep stays put, the core keeps its size, the ticks don't light, and only the core's brightness shows the state and level. The settled brightnesses sit well apart: idle 0.45, listening and speaking 0.6 to 0.85 with the level, thinking 1. The setting is read again every time the screen resumes (`LifecycleResumeEffect`).
 
 **Debug screen.** `src/debug/.../OrbDebugActivity` is in debug builds only and has no launcher icon. Start it with `adb shell am start -n com.alfred.app/com.alfred.app.debug.OrbDebugActivity`. It drives the orb with `FakeSpeech` (syllables with a quick rise and a slower fall, grouped into phrases with pauses) and switches state, size and guides. `ThemeTest`'s colour-literal check now covers `src/debug/` as well.
 
@@ -38,4 +38,4 @@ The orb is Alfred's "face": large on Home (STU-114), smaller on the Transmitting
   - **Listening:** RMS of `AudioCapture` frames.
   - **Speaking:** RMS of the PCM written to `AudioPlayer`. The level should be delayed by the track's latency so the core moves with what is heard.
 - The channel label is drawn outside the orb's square to the upper right. Give the orb room there if a parent clips.
-- If the reduced-motion setting changes while the orb is on screen, it takes effect the next time the orb enters composition.
+- `OrbSize.Small` has a bigger core (42 dp) than `Large` (34 dp) on purpose. That matches the design's Transmitting orb.

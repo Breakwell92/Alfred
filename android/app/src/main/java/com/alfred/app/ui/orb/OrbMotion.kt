@@ -147,10 +147,19 @@ class OrbMotion(state: OrbState = OrbState.Idle, level: Float = 0f) {
                 thinking * (0.98f + 0.1f * pulse) +
                 speaking * (1f + 0.3f * level)
         }
-        coreBrightness = idle * (0.85f + 0.1f * breath) +
-            listening * (0.7f + 0.3f * level) +
-            thinking * (0.75f + 0.25f * pulse) +
-            speaking * (0.7f + 0.3f * level)
+        coreBrightness = if (still) {
+            // Brightness is all a still orb has to show the state, so the states sit well apart:
+            // idle dimmest, thinking brightest, listening and speaking between, following the level.
+            idle * 0.45f +
+                listening * (0.6f + 0.25f * level) +
+                thinking * 1f +
+                speaking * (0.6f + 0.25f * level)
+        } else {
+            idle * (0.85f + 0.1f * breath) +
+                listening * (0.7f + 0.3f * level) +
+                thinking * (0.75f + 0.25f * pulse) +
+                speaking * (0.7f + 0.3f * level)
+        }
         shimmer = if (still) 0f else thinking
         tickPulse = if (still) 0f else speaking * level
     }

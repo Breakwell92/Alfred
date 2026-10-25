@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -25,6 +26,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.alfred.app.ui.theme.AlfredTheme
 import kotlin.math.PI
 import kotlin.math.cos
@@ -45,7 +47,10 @@ enum class OrbSize(
     /** Home. */
     Large(ringRadius = 125.dp, tickLength = 8.dp, majorTickLength = 10.dp, coreRadius = 34.dp, guideRadius = 77.dp),
 
-    /** Transmitting. */
+    /**
+     * Transmitting. Its core is bigger than [Large]'s on purpose: the design's speaking orb has
+     * a large core (88 px radius at 2 px per dp) inside a smaller ring.
+     */
     Small(ringRadius = 90.dp, tickLength = 6.dp, majorTickLength = 8.dp, coreRadius = 42.dp, guideRadius = 55.dp),
     ;
 
@@ -80,7 +85,13 @@ fun AlfredOrb(
     val currentLevel by rememberUpdatedState(level)
     // Read only in the draw phase, so a new frame redraws without recomposing.
     var frame by remember { mutableLongStateOf(0L) }
-    val animate = remember { ValueAnimator.areAnimatorsEnabled() }
+    // "Remove animations" can be switched while the orb stays composed (Home keeps it for
+    // long stretches), so it's read again every time the screen resumes.
+    var animate by remember { mutableStateOf(ValueAnimator.areAnimatorsEnabled()) }
+    LifecycleResumeEffect(Unit) {
+        animate = ValueAnimator.areAnimatorsEnabled()
+        onPauseOrDispose {}
+    }
 
     LaunchedEffect(animate) {
         if (!animate) {

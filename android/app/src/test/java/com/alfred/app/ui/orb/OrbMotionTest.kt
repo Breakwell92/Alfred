@@ -164,6 +164,20 @@ class OrbMotionTest {
     }
 
     @Test
+    fun `with reduced motion each state has a clearly different brightness`() {
+        val motion = OrbMotion()
+        fun settled(state: OrbState, level: Float = 0f) = motion.apply { settle(state, level) }.coreBrightness
+        val idle = settled(OrbState.Idle)
+        val listening = settled(OrbState.Listening)
+        val speaking = settled(OrbState.Speaking)
+        val thinking = settled(OrbState.Thinking)
+        assertTrue("idle $idle vs listening $listening", listening - idle >= 0.1f)
+        assertTrue("idle $idle vs speaking $speaking", speaking - idle >= 0.1f)
+        assertTrue("listening $listening vs thinking $thinking", thinking - listening >= 0.1f)
+        assertTrue("a loud level stays below thinking", thinking - settled(OrbState.Listening, 1f) >= 0.1f)
+    }
+
+    @Test
     fun `angles wrap and distances are the short way round`() {
         assertEquals(350f, OrbMotion.wrap(-10f), 0f)
         assertEquals(10f, OrbMotion.wrap(370f), 0f)

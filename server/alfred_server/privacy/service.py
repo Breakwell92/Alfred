@@ -2,7 +2,7 @@
 
 Whether a run may use a cloud model given what its tools return is the router's call
 (`agents/router.py`); the gateway model refuses a cloud call carrying private tool output as a
-backstop (`models/gateway.py`). See docs/decisions/0025-privacy-routing.md.
+backstop (`models/gateway.py`). See docs/decisions/0026-privacy-routing.md.
 """
 
 from __future__ import annotations

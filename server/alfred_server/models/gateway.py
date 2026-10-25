@@ -9,7 +9,7 @@ Cloud aliases only exist on the proxy when their API key is set; calling a missi
 at request time with a 400 from LiteLLM. Deciding *whether* to use a cloud alias (enabled,
 under budget, needed) is the router's and budget service's job, not this module's.
 
-The one check made here is a backstop for privacy routing (docs/decisions/0025-privacy-routing.md):
+The one check made here is a backstop for privacy routing (docs/decisions/0026-privacy-routing.md):
 a cloud model refuses to send a request holding the result of a tool in `private_tools`.
 """
 

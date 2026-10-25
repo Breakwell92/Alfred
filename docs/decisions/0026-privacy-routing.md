@@ -1,4 +1,4 @@
-# 0025: Privacy routing: keeping `local_only` tool output local
+# 0026: Privacy routing: keeping `local_only` tool output local
 
 - **Status:** accepted
 - **Date:** 2026-10-25

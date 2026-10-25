@@ -9,7 +9,7 @@ Tools that change things are gated (docs/decisions/0013-confirmation-gating.md):
 reaches one pauses, the gate records it and the reply asks for a yes; `resume` continues it.
 
 Output of `local_only` tools stays on local models unless Dan's privacy settings allow it
-(docs/decisions/0025-privacy-routing.md): a run that has such a tool loaded is kept local, and
+(docs/decisions/0026-privacy-routing.md): a run that has such a tool loaded is kept local, and
 a cloud call that would carry such output anyway (from history) is refused by the gateway
 model and retried locally.
 """

@@ -45,7 +45,7 @@ privacy with `get_connector_service().tool_meta("tool_name")`.
 Declare a tool `local_only` when what it returns is private (message bodies, notifications,
 anything that shows who's home). Its output then stays on local models whenever Dan's privacy
 settings (`GET/PUT /settings/privacy`, global switch plus per-connector overrides) don't allow
-it to go to cloud; the default allows it. See [ADR 0025](decisions/0025-privacy-routing.md).
+it to go to cloud; the default allows it. See [ADR 0026](decisions/0026-privacy-routing.md).
 
 A tool that reports failures as a sentence rather than raising (as the Home Assistant and Spotify
 toolkits do) should return them as `ToolError("…")` (`connectors/models.py`). The agent sees the

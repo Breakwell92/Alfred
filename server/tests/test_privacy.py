@@ -1,4 +1,4 @@
-"""Privacy routing (STU-58, docs/decisions/0025-privacy-routing.md).
+"""Privacy routing (STU-58, docs/decisions/0026-privacy-routing.md).
 
 `local_only` tool output stays on local models unless the privacy settings allow it: the router
 keeps a run local when such a tool is loaded, and the gateway model refuses a cloud call that

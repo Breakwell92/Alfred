@@ -2,7 +2,9 @@ package com.alfred.app.ui.settings
 
 import com.alfred.app.data.server.PairingResult
 import com.alfred.app.data.settings.AppSettings
+import com.alfred.app.data.settings.ProfileSettings
 import com.alfred.app.testing.FakeDeviceKeys
+import com.alfred.app.testing.FakeProfileSettingsRepository
 import com.alfred.app.testing.FakeServerClient
 import com.alfred.app.testing.FakeSettingsRepository
 import com.alfred.app.testing.MainDispatcherRule
@@ -26,7 +28,9 @@ class SettingsViewModelTest {
     private val server = FakeServerClient()
     private val keys = FakeDeviceKeys()
 
-    private fun viewModel() = SettingsViewModel(repository, server, keys, mainDispatcher.dispatcher)
+    private val profile = FakeProfileSettingsRepository(ProfileSettings(name = "Dan"))
+
+    private fun viewModel() = SettingsViewModel(repository, server, keys, profile, mainDispatcher.dispatcher)
 
     @Test
     fun `loads the stored settings`() = runTest(mainDispatcher.dispatcher) {
@@ -142,5 +146,19 @@ class SettingsViewModelTest {
         vm.save()
 
         assertEquals("device-1", repository.settings.first().pairedDeviceId)
+    }
+
+    @Test
+    fun `saves the greeting name and place, blank meaning the default`() = runTest(mainDispatcher.dispatcher) {
+        val vm = viewModel()
+        assertEquals("Dan", vm.state.value.name)
+        assertEquals("", vm.state.value.location)
+
+        vm.onNameChange("  ")
+        vm.onLocationChange(" Leeds ")
+        vm.save()
+
+        assertEquals(ProfileSettings(name = null, location = "Leeds"), profile.settings.value)
+        assertEquals("Leeds", vm.state.value.location)
     }
 }

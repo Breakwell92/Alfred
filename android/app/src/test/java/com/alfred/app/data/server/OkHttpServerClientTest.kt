@@ -113,4 +113,47 @@ class OkHttpServerClientTest {
 
         assertEquals(ConnectionStatus.Unreachable("Invalid server URL"), status)
     }
+
+    private fun servePersona(code: Int, body: String) {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (request.url.encodedPath == "/personas/active" &&
+                    request.headers["Authorization"] == "Bearer good"
+                ) {
+                    MockResponse(code = code, body = body)
+                } else {
+                    MockResponse(code = 401)
+                }
+        }
+    }
+
+    @Test
+    fun `active persona is read from its name`() = runTest {
+        servePersona(200, """{"id":"butler","name":"Butler"}""")
+
+        assertEquals("Butler", client.activePersona(settings("good")))
+    }
+
+    @Test
+    fun `no personas endpoint yet gives no persona`() = runTest {
+        servePersona(404, """{"detail":"Not Found"}""")
+
+        assertEquals(null, client.activePersona(settings("good")))
+    }
+
+    @Test
+    fun `persona answer that isn't json gives no persona`() = runTest {
+        servePersona(200, "<html>")
+
+        assertEquals(null, client.activePersona(settings("good")))
+    }
+
+    @Test
+    fun `persona from an unreachable or unset server is null`() = runTest {
+        val url = server.url("/").toString()
+        server.close()
+
+        assertEquals(null, client.activePersona(settings("good", url)))
+        assertEquals(null, client.activePersona(settings("")))
+    }
 }

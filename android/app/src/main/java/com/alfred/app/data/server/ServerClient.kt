@@ -78,6 +78,12 @@ interface ServerClient {
         approve: Boolean,
         proof: ApprovalProof?,
     ): AnswerResult
+
+    /**
+     * The active persona's name from `GET /personas/active` (`{"name": ...}`, STU-66), or null
+     * if the server can't say (not reachable, not set up, or no personas yet).
+     */
+    suspend fun activePersona(settings: AppSettings): String?
 }
 
 /** A server call's status and body. */
@@ -193,6 +199,22 @@ class OkHttpServerClient(
                 }
             } catch (e: IOException) {
                 Outcome.NotSent("Server unreachable: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    override suspend fun activePersona(settings: AppSettings): String? {
+        val token = settings.apiToken.trim()
+        if (!isValidApiToken(token)) return null
+        val base = settings.serverUrl.trim().toHttpUrlOrNull() ?: return null
+        val url = base.withPath("personas").newBuilder().addPathSegment("active").build()
+        return withContext(ioDispatcher) {
+            try {
+                val request = Request.Builder().url(url).header("Authorization", "Bearer $token").build()
+                val reply = client.newCall(request).execute().use { Reply(it.code, it.body.string()) }
+                if (reply.code == 200) stringField(reply, "name") else null
+            } catch (e: IOException) {
+                null
             }
         }
     }

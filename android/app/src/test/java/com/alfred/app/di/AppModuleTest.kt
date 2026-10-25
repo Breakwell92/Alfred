@@ -3,6 +3,7 @@ package com.alfred.app.di
 import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.device.DeviceKeys
 import com.alfred.app.data.settings.AppSettings
+import com.alfred.app.data.settings.ProfileSettingsRepository
 import com.alfred.app.data.settings.SettingsRepository
 import com.alfred.app.data.voice.AudioCapture
 import com.alfred.app.data.voice.AudioPlayer
@@ -18,6 +19,7 @@ import com.alfred.app.data.wakeword.WakeWordSettingsRepository
 import com.alfred.app.testing.FakeAudioCapture
 import com.alfred.app.testing.FakeAudioPlayer
 import com.alfred.app.testing.FakeDeviceKeys
+import com.alfred.app.testing.FakeProfileSettingsRepository
 import com.alfred.app.testing.FakeSettingsRepository
 import com.alfred.app.testing.FakeWakeEventLog
 import com.alfred.app.testing.FakeWakeFeedback
@@ -51,6 +53,7 @@ class AppModuleTest {
             single<AudioCapture> { FakeAudioCapture() }
             single<AudioPlayer> { FakeAudioPlayer() }
             single<WakeWordSettingsRepository> { FakeWakeWordSettingsRepository() }
+            single<ProfileSettingsRepository> { FakeProfileSettingsRepository() }
             single<WakeSignals> { FakeWakeSignals() }
             single<WakeFeedback> { FakeWakeFeedback() }
             single<WakeEventLog> { FakeWakeEventLog() }

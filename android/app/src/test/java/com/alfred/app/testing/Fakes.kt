@@ -20,6 +20,8 @@ import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import com.alfred.app.data.settings.AppSettings
+import com.alfred.app.data.settings.ProfileSettings
+import com.alfred.app.data.settings.ProfileSettingsRepository
 import com.alfred.app.data.settings.SettingsRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +52,15 @@ class FakeSettingsRepository(initial: AppSettings) : SettingsRepository {
 
     override suspend fun savePairing(deviceId: String, name: String) {
         state.value = state.value.copy(pairedDeviceId = deviceId, pairedDeviceName = name)
+    }
+}
+
+class FakeProfileSettingsRepository(initial: ProfileSettings = ProfileSettings()) : ProfileSettingsRepository {
+    private val state = MutableStateFlow(initial)
+    override val settings: StateFlow<ProfileSettings> = state
+
+    override suspend fun update(transform: (ProfileSettings) -> ProfileSettings) {
+        state.value = transform(state.value)
     }
 }
 
@@ -108,6 +119,15 @@ class FakeServerClient(var status: ConnectionStatus = ConnectionStatus.Connected
 
     val answered = mutableListOf<Answer>()
     var answer: AnswerResult = AnswerResult.Answered(null)
+
+    /** What `GET /personas/active` answers; null as if the server can't say. */
+    var persona: String? = null
+    var personaAsked = 0
+
+    override suspend fun activePersona(settings: AppSettings): String? {
+        personaAsked++
+        return persona
+    }
 
     override suspend fun checkConnection(settings: AppSettings): ConnectionStatus {
         checked += settings

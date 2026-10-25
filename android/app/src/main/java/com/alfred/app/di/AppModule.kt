@@ -6,7 +6,9 @@ import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.device.DeviceKeys
 import com.alfred.app.data.server.OkHttpServerClient
 import com.alfred.app.data.server.ServerClient
+import com.alfred.app.data.settings.DataStoreProfileSettingsRepository
 import com.alfred.app.data.settings.DataStoreSettingsRepository
+import com.alfred.app.data.settings.ProfileSettingsRepository
 import com.alfred.app.data.settings.SettingsRepository
 import com.alfred.app.data.settings.settingsDataStore
 import com.alfred.app.data.voice.AudioCapture
@@ -55,6 +57,7 @@ val appModule = module {
     single<SettingsRepository> {
         DataStoreSettingsRepository(androidContext().settingsDataStore, BuildConfig.DEFAULT_SERVER_URL)
     }
+    single<ProfileSettingsRepository> { DataStoreProfileSettingsRepository(androidContext().settingsDataStore) }
     single<ServerClient> { OkHttpServerClient(get()) }
     single<DeviceKeys> { AndroidKeyStoreDeviceKeys() }
     // Signs app_ui approvals; the confirmation screen uses it.
@@ -97,9 +100,9 @@ val appModule = module {
     viewModel { VoiceViewModel(get(), get()) }
     viewModel { RecordingViewModel(get()) }
     // Explicit so Koin doesn't try to inject HomeViewModel's poll interval (a defaulted Long).
-    viewModel { HomeViewModel(get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get()) }
     // Explicit so Koin doesn't try to inject the Keystore dispatcher (a defaulted parameter).
-    viewModel { SettingsViewModel(get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get()) }
 }
 
 const val APP_SCOPE = "appScope"

@@ -18,6 +18,7 @@ from alfred_server.connectors.api import router as connector_router
 from alfred_server.connectors.refresher import TokenRefresher
 from alfred_server.connectors.service import get_connector_service
 from alfred_server.devices.api import router as devices_router
+from alfred_server.privacy.api import router as privacy_router
 from alfred_server.routines.api import router as routines_router
 from alfred_server.ui.routes import router as ui_router
 from alfred_server.voice.gateway.hub import DeviceHub
@@ -122,6 +123,9 @@ def create_app() -> FastAPI:
 
     # GET/PUT /settings/budget, GET /spend/summary.
     protected.include_router(budget_router)
+
+    # GET/PUT /settings/privacy.
+    protected.include_router(privacy_router)
 
     protected.include_router(chat_router)
 

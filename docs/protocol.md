@@ -43,7 +43,7 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 | `ping` | `t`? (number) | Answered by `pong` with the same `t`. |
 | `turn.start` | `turn_id`, `sample_rate` (16000), `persona_id`?, `context`? `{active_room?, location?}` | Opens a turn. Audio frames follow. One turn at a time. |
 | `turn.end` | `turn_id` | End of speech: the server transcribes and answers. |
-| `turn.cancel` | `turn_id` | Stops the turn wherever it is (listening, thinking or speaking). Answered by `turn.cancelled`; nothing if it had already finished. |
+| `turn.cancel` | `turn_id` | Stops the turn wherever it is (listening, thinking or speaking). Answered by `turn.cancelled`; nothing if it had already finished. The app's CUT IN sends it before starting a new turn. |
 | `confirm.reply` | `confirmation_id` (at most 56 characters), `approve` (bool), `turn_id`? | The app's yes/no buttons for a `confirm.request`. Its spoken answer is a turn tagged `turn_id`, default `confirm-<confirmation_id>`. |
 
 `turn_id`: 1–64 of `A–Z a–z 0–9 . _ : -`. `device_id`, `session_id`, `persona_id`: the same characters. `context` strings: one line, at most 100 characters, no `<` or `>` (they go into the agent's prompt).
@@ -58,6 +58,7 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 | `transcript.final` | `turn_id`, `text`, `language`, `audio_s` | What was heard. |
 | `reply.text.delta` | `turn_id`, `text` | Reply text as it's generated (for captions). |
 | `reply.audio.start` | `turn_id`, `sample_rate` (24000), `encoding` (`pcm_s16le`), `channels` (1) | Before the first audio frame of a turn. |
+| `reply.words` | `turn_id`, `words` `[{word, start_ms, end_ms, emphasis?}]` | When each word of the next spoken segment is heard, sent just before that segment's audio. Times are ms from the first sample of the turn's reply audio; `word`s are the reply text's own whitespace-separated tokens, in order. `emphasis: true` marks numbers, times and amounts. Estimated, not aligned. See [ADR 0023](decisions/0023-transmitting-screen.md). |
 | *(binary)* | | Reply audio, see above. |
 | `confirm.request` | `turn_id`, `id`, `summary`, `tier` (`write` / `irreversible`), `expires_at` | The reply asked for an OK before running a tool. See below. |
 | `turn.metadata` | `turn_id`, `specialist`, `alias`, `tier` (`local` / `cloud`), `reason`, `budget_code`, `budget_tier`, `tools`, `input_tokens`, `output_tokens`, `cost_gbp`, `timings` | How the turn ran. Routing fields are absent when no agent ran (e.g. "No" to a confirmation). When the transcript was a routine's phrase, `specialist` is `routine`, `alias` is `none`, there are no tokens, and `routine` `{id, name, ms, steps: [{index, tool, ok, message, ms, skipped}]}` says what ran ([ADR 0021](decisions/0021-routines.md)). |
@@ -95,7 +96,9 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 ← transcript.final {text: "What time is it?"}
 ← reply.text.delta {text: "It's "} …
 ← reply.audio.start {sample_rate: 24000}
+← reply.words {words: [{word: "It's", start_ms: 20, end_ms: 260}, …]}
 ← <0x01 2 "t1" PCM> …                    (speech starts on the first sentence or clause)
+← reply.words {…}                        (next segment, then its audio)
 ← turn.metadata {specialist, alias, …, timings}
 ← reply.audio.end {turn_id: "t1"}
 ```

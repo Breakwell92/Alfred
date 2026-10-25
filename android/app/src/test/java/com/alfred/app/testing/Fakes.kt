@@ -212,10 +212,11 @@ class FakeAudioCapture : AudioCapture {
     }
 }
 
-/** Records calls; playback "finishes" when the test calls [finishPlaying]. Tests set [level]. */
+/** Records calls; playback "finishes" when the test calls [finishPlaying]. Tests set [level] and [position]. */
 class FakeAudioPlayer : AudioPlayer {
     override val playing = MutableStateFlow(false)
     override val level = MutableStateFlow(0f)
+    override val position = MutableStateFlow(0L)
     val calls = mutableListOf<String>()
     val written = mutableListOf<ByteArray>()
 

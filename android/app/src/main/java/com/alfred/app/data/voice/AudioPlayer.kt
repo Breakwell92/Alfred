@@ -32,6 +32,12 @@ interface AudioPlayer {
      */
     val level: StateFlow<Float>
 
+    /**
+     * How much of the reply has been heard, in ms from its first sample (what `reply.words`
+     * timings count from). Polled with [level], so it follows the sound; 0 when not playing.
+     */
+    val position: StateFlow<Long>
+
     /** Starts a new reply (stopping any current one). PCM16 mono at [sampleRate]. */
     fun begin(sampleRate: Int)
 
@@ -71,6 +77,9 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
     private val _level = MutableStateFlow(0f)
     override val level: StateFlow<Float> = _level.asStateFlow()
 
+    private val _position = MutableStateFlow(0L)
+    override val position: StateFlow<Long> = _position.asStateFlow()
+
     // Touched only on the executor thread, except [track], which [stop] pauses directly to
     // unblock a pending write, and the volatile ones the level poller reads.
     @Volatile
@@ -92,6 +101,9 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
 
     /** Reused by every poll; only the poller thread touches it. */
     private val timestamp = AudioTimestamp()
+
+    /** PCM written to the track for this reply; the poller caps the heard position at it. */
+    @Volatile
     private var bytesWritten = 0L
     private var bytesPerSecond = OUTPUT_SAMPLE_RATE * 2
 
@@ -184,11 +196,12 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         )
     }
 
-    /** Publishes the level of the audio being heard now (0 until playback starts). */
+    /** Publishes the level and position of the audio being heard now (0 until playback starts). */
     private fun pollLevel() {
         val current = track
         val heard = if (current != null && started) current.runCatching(::heardFrame).getOrNull() else null
         _level.value = heard?.let(levels::levelAt) ?: 0f
+        _position.value = heard?.let { heardMillis(it, bytesWritten / 2, sampleRate) } ?: 0L
     }
 
     /**
@@ -207,9 +220,15 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         levelPoll?.cancel(false)
         levelPoll = null
         _level.value = 0f
-        // A poll already running when cancelled could publish after the line above; this runs
+        _position.value = 0L
+        // A poll already running when cancelled could publish after the lines above; this runs
         // behind it on the same thread.
-        poller.execute { if (levelPoll == null) _level.value = 0f }
+        poller.execute {
+            if (levelPoll == null) {
+                _level.value = 0f
+                _position.value = 0L
+            }
+        }
     }
 
     private fun startPlaying(gen: Int) {
@@ -229,8 +248,9 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
             val written = current.write(pcm, offset, pcm.size - offset)
             if (written <= 0) return
             offset += written
+            // Per piece, so the position cap (read by the poller) follows a blocking write.
+            bytesWritten += written
         }
-        bytesWritten += offset
     }
 
     /** Waits until everything written has been played (or the reply was stopped). */

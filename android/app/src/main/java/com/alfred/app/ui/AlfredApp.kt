@@ -39,6 +39,8 @@ import com.alfred.app.ui.recording.RecordingScreen
 import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsScreen
 import com.alfred.app.ui.theme.AlfredTheme
+import com.alfred.app.ui.transmitting.TransmittingScreen
+import com.alfred.app.ui.transmitting.TransmittingViewModel
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -55,8 +57,12 @@ enum class Destination(val route: String, val label: String, val icon: ImageVect
  * screen goes back to it. There's no bottom bar; the design has none.
  */
 @Composable
-fun AlfredApp(recordingViewModel: RecordingViewModel = koinViewModel()) {
+fun AlfredApp(
+    recordingViewModel: RecordingViewModel = koinViewModel(),
+    transmittingViewModel: TransmittingViewModel = koinViewModel(),
+) {
     val recording by recordingViewModel.state.collectAsStateWithLifecycle()
+    val transmitting by transmittingViewModel.state.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
@@ -114,6 +120,9 @@ fun AlfredApp(recordingViewModel: RecordingViewModel = koinViewModel()) {
         // underneath, so a hold-to-talk press that opened it still sends when let go.
         if (recording.listening) {
             RecordingScreen(recordingViewModel, Modifier.fillMaxSize())
+        } else if (transmitting.visible) {
+            // Alfred's reply, the same way (ADR 0023).
+            TransmittingScreen(transmittingViewModel, Modifier.fillMaxSize())
         }
     }
 }

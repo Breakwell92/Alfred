@@ -47,6 +47,14 @@ fun presentedFrame(framePosition: Long, timestampNanos: Long, nowNanos: Long, sa
     (framePosition + (nowNanos - timestampNanos) * sampleRate / 1_000_000_000L).coerceAtLeast(0)
 
 /**
+ * Ms of the reply heard, from the [presentedFrame] estimate but never past the [framesWritten]
+ * to the track: during an underrun the timestamp stops while the clock runs on, and the
+ * extrapolation would otherwise run ahead into audio that hasn't arrived.
+ */
+fun heardMillis(presentedFrame: Long, framesWritten: Long, sampleRate: Int): Long =
+    presentedFrame.coerceIn(0, framesWritten.coerceAtLeast(0)) * 1000 / sampleRate
+
+/**
  * Levels of the PCM written to an output track, looked up by playback position: the level is
  * that of what's leaving the speaker now, not of what was just written (which can be up to the
  * track's buffer ahead). One level per [windowFrames] samples; a trailing part-window isn't

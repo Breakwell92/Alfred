@@ -19,12 +19,15 @@ from alfred_server.voice.tts import (
     LocalTTS,
     PiperEngine,
     SentenceSplitter,
+    SpokenSegment,
     TTSUnavailableError,
     UnknownVoiceError,
     VoiceConfig,
     VoiceInfo,
     build_tts,
+    estimate_word_timings,
     resolve_model_dir,
+    speech_bounds,
     split_sentences,
 )
 
@@ -291,6 +294,61 @@ def test_first_audio_arrives_before_the_text_stream_ends() -> None:
 
     assert first < 0.6  # after the second token, not after all five
     assert total >= 1.0
+
+
+def test_each_segment_carries_its_word_timings() -> None:
+    tts = make_tts()
+
+    async def run() -> list[SpokenSegment]:
+        stream = tokens("Good evening. ", "It's 7:30 now.")
+        return [
+            s async for s in tts.synthesize_segments(stream, VoiceConfig("kokoro", "bm_george"))
+        ]
+
+    first, second = asyncio.run(run())
+
+    assert [w.word for w in first.words] == ["Good", "evening."]
+    assert [w.word for w in second.words] == ["It's", "7:30", "now."]
+    assert [w.emphasis for w in second.words] == [False, True, False]
+    # Timed within the segment's own audio (the pause after it excluded).
+    speech_ms = (len(second.pcm) // 2 / OUTPUT_SAMPLE_RATE - SEGMENT_PAUSE_S) * 1000
+    assert second.words[0].start_ms >= 0
+    assert second.words[-1].end_ms == pytest.approx(speech_ms, abs=15)
+
+
+def test_word_timings_share_the_speech_by_length() -> None:
+    words = estimate_word_timings("I am extraordinarily pleased, sir.", 0.5, 2.5)
+
+    assert [w.word for w in words] == ["I", "am", "extraordinarily", "pleased,", "sir."]
+    assert words[0].start_ms == 500
+    assert words[-1].end_ms == 2500
+    durations = [w.end_ms - w.start_ms for w in words]
+    assert durations[2] > durations[3] > durations[1] > durations[0]
+    # Back to back, with a longer gap after the comma.
+    gaps = [b.start_ms - a.end_ms for a, b in zip(words, words[1:], strict=False)]
+    assert all(g >= 0 for g in gaps)
+    assert gaps[3] > gaps[0]
+
+
+def test_word_timings_skip_unspeakable_tokens_and_mark_values() -> None:
+    words = estimate_word_timings("Lunch — £12 at 1 pm, or 40% off", 0.0, 3.0)
+
+    assert [w.word for w in words] == ["Lunch", "£12", "at", "1", "pm,", "or", "40%", "off"]
+    assert [w.word for w in words if w.emphasis] == ["£12", "1", "pm,", "40%"]
+    assert estimate_word_timings(" — ", 0.0, 1.0) == ()
+    assert estimate_word_timings("", 0.0, 1.0) == ()
+
+
+def test_speech_bounds_ignore_quiet_ends() -> None:
+    rate = 24_000
+    tone = 0.5 * np.sin(2 * np.pi * 220 * np.arange(rate) / rate)
+    audio = np.concatenate([np.zeros(rate // 4), tone, np.full(rate // 2, 1e-4)]).astype(np.float32)
+
+    start, end = speech_bounds(audio, rate)
+
+    assert start == pytest.approx(0.25, abs=0.011)
+    assert end == pytest.approx(1.25, abs=0.011)
+    assert speech_bounds(np.zeros(100, dtype=np.float32), rate) == (0.0, 100 / rate)
 
 
 def test_unknown_voice_is_rejected() -> None:

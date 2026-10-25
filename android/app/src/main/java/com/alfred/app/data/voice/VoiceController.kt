@@ -59,6 +59,8 @@ data class VoiceState(
     val partialUnstable: String = "",
     val transcript: String = "",
     val reply: String = "",
+    /** When each word of [reply] is heard (`reply.words`), in order; empty from servers without timings. */
+    val words: List<SpokenWord> = emptyList(),
     val metadata: TurnMetadata? = null,
     val confirmation: PendingConfirmation? = null,
     /** Something went wrong with the last turn or answer, in words for the user. */
@@ -120,6 +122,9 @@ class VoiceController(
             VoicePhase.Idle, VoicePhase.Thinking -> 0f
         }
     }.stateIn(scope, SharingStarted.Eagerly, 0f)
+
+    /** How much of the reply has been heard (ms), for lining the text up with [VoiceState.words]. */
+    val playbackPosition: StateFlow<Long> = player.position
 
     private val _meter = MutableStateFlow(MicMeter())
 
@@ -249,6 +254,18 @@ class VoiceController(
         sendDeferredReply()
     }
 
+    /**
+     * Manual barge-in (the Transmitting screen's CUT IN): silences the reply at once, stops the
+     * turn on the server and starts listening for a new one. If listening can't start (no
+     * link), the reply is still stopped and the error says why. False in that case.
+     */
+    fun cutIn(endOfSpeech: EndOfSpeechDetector? = null): Boolean {
+        player.stop()
+        if (startListening(endOfSpeech)) return true
+        cancel()
+        return false
+    }
+
     /** Answers the pending confirmation from the on-screen buttons. */
     fun answer(approve: Boolean) {
         val confirmation = _state.value.confirmation ?: return
@@ -305,6 +322,7 @@ class VoiceController(
                 phase = VoicePhase.Thinking,
                 transcript = "",
                 reply = "",
+                words = emptyList(),
                 metadata = null,
                 confirmation = null,
                 error = null,
@@ -352,7 +370,13 @@ class VoiceController(
                     expiryJob?.cancel()
                     val reply = result.reply ?: if (approve) "Done." else "OK, I won't."
                     _state.update {
-                        it.copy(confirmation = null, transcript = "", reply = reply, metadata = null)
+                        it.copy(
+                            confirmation = null,
+                            transcript = "",
+                            reply = reply,
+                            words = emptyList(),
+                            metadata = null,
+                        )
                     }
                 }
                 is AnswerResult.Gone -> {
@@ -391,6 +415,9 @@ class VoiceController(
             }
             is ServerMessage.ReplyTextDelta -> ifCurrent(message.turnId) {
                 _state.update { it.copy(reply = it.reply + message.text) }
+            }
+            is ServerMessage.ReplyWords -> ifCurrent(message.turnId) {
+                _state.update { it.copy(words = it.words + message.words) }
             }
             is ServerMessage.ReplyAudioStart -> ifCurrent(message.turnId) {
                 player.begin(message.sampleRate)

@@ -110,6 +110,21 @@ class ProtocolTest {
     }
 
     @Test
+    fun `parses word timings`() {
+        assertEquals(
+            ServerMessage.ReplyWords(
+                "t1",
+                listOf(SpokenWord("At", 40, 210), SpokenWord("7:30.", 210, 900, emphasis = true)),
+            ),
+            parseServerMessage(
+                """{"type":"reply.words","turn_id":"t1","words":[
+                   {"word":"At","start_ms":40,"end_ms":210},
+                   {"word":"7:30.","start_ms":210,"end_ms":900,"emphasis":true}]}""",
+            ),
+        )
+    }
+
+    @Test
     fun `parses turn messages`() {
         assertEquals(ServerMessage.Pong(3.0), parseServerMessage("""{"type":"pong","t":3}"""))
         assertEquals(

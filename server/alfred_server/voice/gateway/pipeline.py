@@ -48,7 +48,13 @@ from alfred_server.routines.service import RoutineService
 from alfred_server.voice.gateway.protocol import ConfirmReply, audio_frame, message
 from alfred_server.voice.gateway.yes_no import classify_yes_no
 from alfred_server.voice.stt import AudioTooLongError, Partial, SpeechToText
-from alfred_server.voice.tts import OUTPUT_SAMPLE_RATE, TextToSpeech, VoiceConfig
+from alfred_server.voice.tts import (
+    OUTPUT_SAMPLE_RATE,
+    TextToSpeech,
+    VoiceConfig,
+    WordTiming,
+    pcm_chunks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -397,7 +403,10 @@ def _log_abandoned(task: asyncio.Task[Any]) -> None:
 
 
 class _Speaker:
-    """Sends reply text as `reply.text.delta` and speaks it, streaming tagged audio frames."""
+    """Sends reply text as `reply.text.delta` and speaks it, streaming tagged audio frames.
+
+    Each spoken segment's word timings go out as `reply.words` just before its audio.
+    """
 
     def __init__(self, turn: VoiceTurn) -> None:
         self._turn = turn
@@ -436,7 +445,9 @@ class _Speaker:
         tts, voice = turn.services.tts, turn.services.voice
         assert tts is not None and voice is not None  # checked before the turn started
         started = False
-        async for chunk in tts.synthesize(self._texts(), voice):
+        # Reply audio sent so far, in samples: where the next segment starts.
+        offset = 0
+        async for segment in tts.synthesize_segments(self._texts(), voice):
             if not started:
                 started = True
                 turn.timings.first_audio = now()
@@ -446,4 +457,22 @@ class _Speaker:
                     encoding="pcm_s16le",
                     channels=1,
                 )
-            await turn.sender.send_bytes(audio_frame(turn.turn_id, chunk))
+            if segment.words:
+                await turn.send("reply.words", words=_words_message(segment.words, offset))
+            for chunk in pcm_chunks(segment.pcm):
+                await turn.sender.send_bytes(audio_frame(turn.turn_id, chunk))
+            offset += len(segment.pcm) // 2
+
+
+def _words_message(words: tuple[WordTiming, ...], offset_samples: int) -> list[dict[str, Any]]:
+    """`reply.words` entries, timed from the start of the turn's reply audio."""
+    offset_ms = round(offset_samples * 1000 / OUTPUT_SAMPLE_RATE)
+    return [
+        {
+            "word": w.word,
+            "start_ms": w.start_ms + offset_ms,
+            "end_ms": w.end_ms + offset_ms,
+            **({"emphasis": True} if w.emphasis else {}),
+        }
+        for w in words
+    ]

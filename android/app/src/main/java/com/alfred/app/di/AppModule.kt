@@ -36,6 +36,7 @@ import com.alfred.app.ui.home.VoiceViewModel
 import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsViewModel
 import com.alfred.app.ui.settings.WakeWordSettingsViewModel
+import com.alfred.app.ui.transmitting.TransmittingViewModel
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -99,6 +100,8 @@ val appModule = module {
     viewModel { WakeWordSettingsViewModel(get(), get(), get()) }
     viewModel { VoiceViewModel(get(), get()) }
     viewModel { RecordingViewModel(get()) }
+    // Explicit so Koin doesn't try to inject the defaulted detector factory and hold time.
+    viewModel { TransmittingViewModel(get()) }
     // Explicit so Koin doesn't try to inject HomeViewModel's poll interval (a defaulted Long).
     viewModel { HomeViewModel(get(), get(), get()) }
     // Explicit so Koin doesn't try to inject the Keystore dispatcher (a defaulted parameter).

@@ -35,8 +35,10 @@ Service = Annotated[ConfirmationService, Depends(confirmation_service_dependency
 
 class ConfirmationAnswer(BaseModel):
     approve: bool
-    # Where the answer comes from. Only the Alfred app's own confirmation screen sends
-    # `app_ui`; it's the only channel that can approve an `irreversible` tool.
+    # Where the answer comes from. Only the Alfred app's own confirmation screen should send
+    # `app_ui`; it's the only channel that can approve an `irreversible` tool. NOT
+    # authenticated: it's asserted by the client, and any holder of the shared API token can
+    # claim it. Binding it to the app is STU-109 (ADR 0012).
     channel: Literal["text", "app_ui"] = "text"
 
 
@@ -104,7 +106,11 @@ async def answer_confirmation(
         await cancel_paused_run(agent_router.db, c, reply)
         return ConfirmationResult(message="Denied.", reply=reply, session_id=c.session_id)
 
-    if not can_approve(c.tier, body.channel):
+    try:
+        tier = await asyncio.to_thread(service.current_tier, c)
+    except Exception as exc:
+        raise _unavailable(exc) from exc
+    if not can_approve(tier, body.channel):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "This action can only be approved in the Alfred app."
         )

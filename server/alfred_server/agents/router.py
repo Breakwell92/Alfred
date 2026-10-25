@@ -639,7 +639,13 @@ class Router:
             yield Token((" " if attempt.sent else "") + prompt)
             said = "".join(attempt.parts) + " " + prompt if attempt.sent else prompt
             reply = _with_announcement(announcement, said)
-            yield Done(reply, route, tuple(confirmation.tools), attempt.metrics, confirmation)
+            # Only tools that ran before the pause; the waiting ones are `confirmation.tools`.
+            ran = tuple(
+                t.tool_name
+                for t in attempt.paused.tools or []
+                if t.tool_name and t.result is not None and not t.requires_confirmation
+            )
+            yield Done(reply, route, ran, attempt.metrics, confirmation)
             return
 
         reply = attempt.reply()

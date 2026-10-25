@@ -253,3 +253,17 @@ def test_replies() -> None:
     assert expired_reply(c) == "I didn't hear back, so I didn't send a test message to Sam: 'Hi'."
     irreversible = c.model_copy(update={"tier": "irreversible"})
     assert ask_prompt(irreversible).endswith("Please approve it in the Alfred app.")
+
+
+def test_current_tier_follows_tightening_but_not_relaxing() -> None:
+    s = service(Clock())
+    c = s.create(
+        paused_run(), specialist="general", alias="local-main", ctx=ctx(), policy=s.policy()
+    )
+    assert s.current_tier(c) == "write"
+
+    s.set_override("test_messages", "send_test_message", "irreversible")
+    assert s.current_tier(c) == "irreversible"
+
+    s.set_override("test_messages", "send_test_message", "read")
+    assert s.current_tier(c) == "write"

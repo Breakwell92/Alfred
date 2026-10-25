@@ -237,6 +237,31 @@ def test_irreversible_rejects_text_approval(harness: ChatHarness) -> None:
     assert SENT_TEST_MESSAGES == [("Sam", "Running 10 mins late")]
 
 
+def test_tightening_a_tool_while_it_waits_raises_the_bar(harness: ChatHarness) -> None:
+    c = ask_to_send(harness, session_id="s1")["confirmation"]
+    assert c["tier"] == "write"
+    set_risk(harness, "irreversible")
+
+    said = harness.post("/chat", text="yes", session_id="s1").json()
+
+    assert said["reply"] == "That one needs approving in the Alfred app."
+    assert answer(harness, c["id"], approve=True, channel="text").status_code == 403
+    assert SENT_TEST_MESSAGES == []
+    assert len(pending(harness)) == 1
+
+
+def test_relaxing_a_tool_while_it_waits_does_not_lower_the_bar(harness: ChatHarness) -> None:
+    set_risk(harness, "irreversible")
+    c = ask_to_send(harness, session_id="s1")["confirmation"]
+    set_risk(harness, "read")
+
+    said = harness.post("/chat", text="yes", session_id="s1").json()
+
+    assert said["reply"] == "That one needs approving in the Alfred app."
+    assert answer(harness, c["id"], approve=True).status_code == 403
+    assert SENT_TEST_MESSAGES == []
+
+
 def test_relaxing_a_tool_to_read_runs_it_immediately(harness: ChatHarness) -> None:
     set_risk(harness, "read")
     harness.reply_with(
@@ -272,7 +297,8 @@ def test_stream_pauses_with_the_confirmation_in_done(harness: ChatHarness) -> No
     done = events[1][1]
     assert done["reply"] == ASK
     assert done["confirmation"]["summary"] == SUMMARY
-    assert done["turn"]["tools"] == ["send_test_message"]
+    assert done["turn"]["tools"] == []  # it hasn't run: it's waiting in `confirmation.tools`
+    assert done["confirmation"]["tools"] == ["send_test_message"]
     assert SENT_TEST_MESSAGES == []
 
 

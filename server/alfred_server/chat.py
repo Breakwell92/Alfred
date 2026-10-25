@@ -185,7 +185,8 @@ async def answer_pending(
         if await asyncio.to_thread(confirmations.resolve, c, "denied"):
             await cancel_paused_run(db, c, denied_reply(c))
         return Answered(denied_reply(c))
-    if not can_approve(c.tier, CHANNEL_FOR_DEVICE[ctx.device_type]):
+    tier = await asyncio.to_thread(confirmations.current_tier, c)
+    if not can_approve(tier, CHANNEL_FOR_DEVICE[ctx.device_type]):
         return Answered(APP_ONLY_REPLY, confirmation=c)
     if not await asyncio.to_thread(confirmations.resolve, c, "approved"):
         return Answered("That's already been dealt with.")

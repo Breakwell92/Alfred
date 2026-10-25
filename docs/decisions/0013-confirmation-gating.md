@@ -39,6 +39,9 @@ Every connector tool declares a `risk` (ADR 0010): `read` changes nothing, `writ
 
 ## Consequences
 
+- **`app_ui` is a client-asserted flag, not authenticated.** Every client (the phone, the web chat page, curl) holds the same shared `ALFRED_API_TOKEN`, so any token holder can send `{"approve": true, "channel": "app_ui"}` and approve an `irreversible` action. The rule stops a misheard "yes" or a typed reply from approving one, but it doesn't stop a client that lies. [STU-109](https://linear.app/db-digital/issue/STU-109) binds `app_ui` approvals to something only the app has, and blocks the first connector with an `irreversible` tool.
+- The approval is checked against the tier **now** (`ConfirmationService.current_tier`): if Dan tightens a tool while its confirmation waits, the answer must meet the new tier. Relaxing a tool doesn't lower a pending one.
+
 - New connectors only need honest `risk` values and, for gated tools, a `confirm_summary`. The router gates them without further code.
 - Voice confirmation (STU-64/65), the app's confirmation screen and push notifications (STU-84) build on this API and the `notifications` table.
 - A denied or expired request disappears from the conversation history (the run is cancelled, not completed with a refusal). The model won't remember being told no. This is deliberate: it keeps the history valid and costs no model call.

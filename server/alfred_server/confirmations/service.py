@@ -177,6 +177,16 @@ class ConfirmationService:
     def get(self, confirmation_id: str) -> PendingConfirmation | None:
         return self.store.get(confirmation_id)
 
+    def current_tier(self, c: PendingConfirmation) -> Tier:
+        """`c`'s tier now: the higher of its tier when it paused and its tools' current tiers.
+
+        Dan may have tightened a tool (e.g. `write` → `irreversible`) while it waited; the
+        approval must then meet the new tier. Relaxing never lowers it. Raises
+        `ConfirmationsUnavailableError` if the overrides can't be read.
+        """
+        policy = self.policy()
+        return highest([c.tier, *(policy.tier(name) for name in c.tools)])
+
     def is_expired(self, c: PendingConfirmation) -> bool:
         expires_at = c.expires_at if c.expires_at.tzinfo else c.expires_at.replace(tzinfo=UTC)
         return expires_at <= self.clock()

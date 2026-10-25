@@ -9,7 +9,7 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 /**
- * The key that signs `app_ui` approvals (server ADR 0014). Its public half is registered with
+ * The key that signs `app_ui` approvals (server ADR 0016). Its public half is registered with
  * the server at pairing; the private half never leaves the device.
  */
 interface DeviceKeys {

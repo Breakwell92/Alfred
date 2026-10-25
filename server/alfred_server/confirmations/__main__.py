@@ -6,7 +6,7 @@
 Uses `ALFRED_DATABASE_URL`, like the server. The API (`PUT /settings/permissions/...`) can
 tighten any tool and relax any tool that isn't `irreversible`; taking a tool out of
 `irreversible` is only possible here, so the shared API token can't get round signed `app_ui`
-approvals (ADR 0014).
+approvals (ADR 0016).
 """
 
 from __future__ import annotations

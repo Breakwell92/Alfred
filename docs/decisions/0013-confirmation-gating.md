@@ -24,7 +24,7 @@ Every connector tool declares a `risk` (ADR 0010): `read` changes nothing, `writ
 | `write` | `text`, `voice` or `app_ui` (never `scheduled`) |
 | `irreversible` | `app_ui` only |
 
-`POST /confirmations/{id}` takes `{approve, channel, proof?}`. `channel` defaults to `text`, and only the Alfred app's own confirmation screen sends `app_ui`. An approval counts as `app_ui` only with a `proof` signed by a paired device; without one it's treated as `text`, and a proof that fails is a 403 (ADR 0014, STU-109). The web chat page sends no channel, so it can't approve an irreversible action, which matches its label. A wrong channel gets a 403. An expired or already answered confirmation gets a 409. Claiming an answer is an atomic status update, so two answers can't both resume a run.
+`POST /confirmations/{id}` takes `{approve, channel, proof?}`. `channel` defaults to `text`, and only the Alfred app's own confirmation screen sends `app_ui`. An approval counts as `app_ui` only with a `proof` signed by a paired device; without one it's treated as `text`, and a proof that fails is a 403 (ADR 0016, STU-109). The web chat page sends no channel, so it can't approve an irreversible action, which matches its label. A wrong channel gets a 403. An expired or already answered confirmation gets a 409. Claiming an answer is an atomic status update, so two answers can't both resume a run.
 
 **Text replies.** The paused turn's reply asks: "I need your OK first: <summary>. Shall I go ahead?" (irreversible: "... Please approve it in the Alfred app."), and `/chat` and the stream's `done` carry the `confirmation`. While one is pending, the session's next message is checked first:
 - A plain yes ("yes", "go ahead", "ok") resumes the run without the classifier.
@@ -41,7 +41,7 @@ Every connector tool declares a `risk` (ADR 0010): `read` changes nothing, `writ
 
 ## Consequences
 
-- **`app_ui` is proven, not asserted** (STU-109, ADR 0014). It was originally a client-asserted flag, so any holder of the shared API token could approve an `irreversible` action. Now an `app_ui` approval needs an ECDSA signature from a Keystore key on a device paired with a one-time code from the server CLI (`python -m alfred_server.devices pair`). The shared token alone can't approve an `irreversible` tool.
+- **`app_ui` is proven, not asserted** (STU-109, ADR 0016). It was originally a client-asserted flag, so any holder of the shared API token could approve an `irreversible` action. Now an `app_ui` approval needs an ECDSA signature from a Keystore key on a device paired with a one-time code from the server CLI (`python -m alfred_server.devices pair`). The shared token alone can't approve an `irreversible` tool.
 - The approval is checked against the tier **now** (`ConfirmationService.current_tier`): if Dan tightens a tool while its confirmation waits, the answer must meet the new tier. Relaxing a tool doesn't lower a pending one.
 
 - New connectors only need honest `risk` values and, for gated tools, a `confirm_summary`. The router gates them without further code.

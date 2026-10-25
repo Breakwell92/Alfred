@@ -265,6 +265,6 @@ def test_current_tier_follows_tightening_but_not_relaxing() -> None:
     s.set_override("test_messages", "send_test_message", "irreversible")
     assert s.current_tier(c) == "irreversible"
 
-    # Relaxing out of irreversible is the server CLI's job (ADR 0014).
+    # Relaxing out of irreversible is the server CLI's job (ADR 0016).
     s.set_override("test_messages", "send_test_message", "read", allow_relaxing_irreversible=True)
     assert s.current_tier(c) == "write"

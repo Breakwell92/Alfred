@@ -12,7 +12,7 @@ Single activity, Compose navigation and Material 3, ViewModels with coroutines/F
 | `di/AppModule.kt` | Koin module: OkHttp, settings, server client, ViewModels |
 | `data/settings/` | `AppSettings` (server URL, API token) in DataStore |
 | `data/server/` | `ServerClient`: checks `/health` then `/me` and returns a `ConnectionStatus`; pairs the device (`POST /devices/pair`) and answers confirmations |
-| `data/device/` | `DeviceKeys` (EC P-256 key in the Android Keystore) and `ApprovalSigner`, which signs `app_ui` approvals (server ADR 0014) |
+| `data/device/` | `DeviceKeys` (EC P-256 key in the Android Keystore) and `ApprovalSigner`, which signs `app_ui` approvals (server ADR 0016) |
 | `ui/` | `AlfredApp` (bottom nav), Home, Settings, Connectors and Activity screens, theme |
 
 ## Build and test

@@ -481,7 +481,7 @@ def test_removing_an_override(harness: ChatHarness) -> None:
 
 @pytest.mark.parametrize("risk", ["read", "write", None])
 def test_the_api_cannot_relax_an_irreversible_tool(harness: ChatHarness, risk: str | None) -> None:
-    # Otherwise the shared token could relax a tool and approve it by text (ADR 0014).
+    # Otherwise the shared token could relax a tool and approve it by text (ADR 0016).
     assert set_risk(harness, "irreversible").status_code == 200
 
     response = set_risk(harness, risk)

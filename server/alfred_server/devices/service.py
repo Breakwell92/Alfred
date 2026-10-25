@@ -5,7 +5,7 @@ public half once, with a one-time code that only someone with a shell on the ser
 (`python -m alfred_server.devices pair`). Every `app_ui` approval is then signed over
 `approval_message(...)`, so the shared API token alone can't approve an `irreversible` tool.
 
-Design: docs/decisions/0014-app-approval-signing.md.
+Design: docs/decisions/0016-app-approval-signing.md.
 """
 
 from __future__ import annotations

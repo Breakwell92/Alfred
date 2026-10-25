@@ -1,4 +1,4 @@
-# 0014: Signed approvals from a paired app
+# 0016: Signed approvals from a paired app
 
 - **Status:** accepted
 - **Date:** 2026-10-25

@@ -58,7 +58,7 @@ class IrreversibleRelaxError(PermissionError):
     """A change would take a tool out of `irreversible` without the server CLI.
 
     Over the API it would let the shared API token undo what only a signed `app_ui` approval
-    may do (ADR 0014), so it's allowed only from `python -m alfred_server.confirmations`.
+    may do (ADR 0016), so it's allowed only from `python -m alfred_server.confirmations`.
     """
 
 

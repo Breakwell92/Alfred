@@ -40,7 +40,7 @@ class ConfirmationAnswer(BaseModel):
     approve: bool
     # Where the answer comes from. `app_ui` (the Alfred app's own confirmation screen) is the
     # only channel that can approve an `irreversible` tool, and an approval only counts as
-    # `app_ui` with a valid `proof` signed by a paired device (ADR 0014). Without one it's
+    # `app_ui` with a valid `proof` signed by a paired device (ADR 0016). Without one it's
     # treated as `text`.
     channel: Literal["text", "app_ui"] = "text"
     proof: ApprovalProof | None = None

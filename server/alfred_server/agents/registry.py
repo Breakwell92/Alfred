@@ -15,6 +15,7 @@ from agno.models.base import Model
 
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.echo import build_echo_agent
+from alfred_server.agents.home import HOME_AGENT_NAME, build_home_agent
 from alfred_server.agents.media import MEDIA_AGENT_NAME, build_media_agent
 
 # Handles anything no other specialist claims. Always registered.
@@ -63,6 +64,10 @@ def _media_factory(ctx: RequestContext, model: Model, db: BaseDb | AsyncBaseDb) 
     return build_media_agent(ctx, db=db, model=model)
 
 
+def _home_factory(ctx: RequestContext, model: Model, db: BaseDb | AsyncBaseDb) -> Agent:
+    return build_home_agent(ctx, db=db, model=model)
+
+
 @lru_cache
 def get_registry() -> SpecialistRegistry:
     """The process-wide registry with every specialist registered."""
@@ -76,6 +81,16 @@ def get_registry() -> SpecialistRegistry:
             "music: play artists, songs, playlists or music for a mood; pause, skip, volume, "
             "what's playing, speakers (Spotify)",
             _media_factory,
+            uses_connectors=True,
+        )
+    )
+    registry.register(
+        Specialist(
+            HOME_AGENT_NAME,
+            "smart home devices: switch lights or set their brightness, set the heating "
+            "temperature, blinds, lighting scenes, door locks, garage door, and whether a "
+            "device is on or locked (Home Assistant)",
+            _home_factory,
             uses_connectors=True,
         )
     )

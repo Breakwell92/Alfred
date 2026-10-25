@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     # out. Off by default: a second tool makes `local-router` stop calling `get_time` (evals).
     test_tools_enabled: bool = False
 
+    # Home Assistant (connectors/builtin/home_assistant.py, docs/connectors/home-assistant.md).
+    # Base URL of the HA instance, e.g. http://homeassistant.local:8123; Alfred uses its MCP
+    # server at <url>/api/mcp. The access token is the connector's API key, in the vault.
+    home_assistant_url: str | None = None
+    # Per-call limit for HA's MCP server (connect, initialise and the tool call each).
+    home_assistant_timeout_s: float = Field(default=10.0, gt=0)
+
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.
     stt_enabled: bool = False

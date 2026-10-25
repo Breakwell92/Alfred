@@ -72,7 +72,13 @@ start it with a capital verb and no full stop. The dummy `test_messages` connect
 6. If it's a new specialist, register it with `uses_connectors=True` and give its tools eval
    fixtures (`server/evals/README.md`).
 
-Connectors so far: [Spotify](connectors/spotify.md) (OAuth2, own async Web API toolkit).
+Connectors so far: [Spotify](connectors/spotify.md) (OAuth2, own async Web API toolkit),
+[Home Assistant](connectors/home-assistant.md) (API key, own toolkit over HA's MCP server).
+
+When an MCP server's tools are too generic to give one honest risk (Home Assistant's
+`HassTurnOn` switches lights and unlocks doors alike), wrap them in an Agno toolkit of your own
+whose tools each call the server with the risky arguments pinned, rather than exposing the
+server's tools directly ([ADR 0017](decisions/0017-home-assistant.md)).
 
 ### Worked example: the `time` connector
 

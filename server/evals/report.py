@@ -14,7 +14,7 @@ from evals.cases import EvalCase
 from evals.runner import CaseResult
 
 REPORTS_DIR = Path(__file__).parent / "reports"
-CHECKS = ("specialist", "tools", "forbidden", "tier", "reply")
+CHECKS = ("specialist", "tools", "forbidden", "tier", "reply", "confirm")
 
 
 @dataclass(frozen=True)

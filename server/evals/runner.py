@@ -132,6 +132,8 @@ class CaseResult:
     routing_reason: str | None = None
     classification: dict[str, Any] | None = None
     reply: str | None = None
+    # Tier of the confirmation the run paused for, if it paused.
+    confirmation_tier: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     route_ms: float = 0.0
     total_ms: float = 0.0
@@ -207,6 +209,14 @@ def score(case: EvalCase, result: CaseResult) -> None:
             failures.append(f"reply lacks {absent}")
     else:
         checks["reply"] = None
+
+    if case.expect_confirmation:
+        checks["confirm"] = result.confirmation_tier == case.expect_confirmation
+        if not checks["confirm"]:
+            got = result.confirmation_tier or "no confirmation"
+            failures.append(f"{got}, expected a {case.expect_confirmation} confirmation")
+    else:
+        checks["confirm"] = None
 
     if result.error:
         failures.insert(0, result.error)
@@ -315,6 +325,7 @@ class EvalRunner:
             reply = await router.run(route, case.input, ctx)
             result.reply = reply.reply
             if reply.confirmation is not None:
+                result.confirmation_tier = reply.confirmation.tier
                 # The gated calls didn't run (no hook call), but the model made them.
                 for requirement in reply.run.active_requirements:
                     te = requirement.tool_execution

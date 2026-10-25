@@ -57,8 +57,9 @@ def test_undeclared_tools_are_irreversible() -> None:
 
 
 def test_gated_names() -> None:
-    assert policy().gated_names() == ["send_test_message"]
-    assert policy(send_test_message="read").gated_names() == []
+    home_secure = ["ha_lock", "ha_unlock", "ha_open_door", "ha_close_door"]
+    assert policy().gated_names() == ["send_test_message", *home_secure]
+    assert policy(send_test_message="read").gated_names() == home_secure
 
 
 def test_highest() -> None:
@@ -84,12 +85,12 @@ def test_gate_agent_rewrites_a_toolkit_every_time() -> None:
 
     gate_agent(agent, policy())
     assert toolkit.functions["send_test_message"].requires_confirmation is True
-    assert toolkit.requires_confirmation_tools == ["send_test_message"]
+    assert "send_test_message" in toolkit.requires_confirmation_tools
 
     # A shared (cached MCP) toolkit loses the flag once the tool is relaxed.
     gate_agent(Agent(tools=[toolkit]), policy(send_test_message="read"))
     assert toolkit.functions["send_test_message"].requires_confirmation is False
-    assert toolkit.requires_confirmation_tools == []
+    assert "send_test_message" not in toolkit.requires_confirmation_tools
 
 
 def test_gate_agent_drops_provider_builtin_tools() -> None:

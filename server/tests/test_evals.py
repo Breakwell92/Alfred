@@ -176,6 +176,7 @@ def test_score_forbidden_tier_reply_and_specialist() -> None:
         "forbidden": False,
         "tier": False,
         "reply": False,
+        "confirm": None,
     }
     assert len(r.failures) == 4
 
@@ -225,7 +226,9 @@ def test_runner_scores_a_gated_call_without_running_it(monkeypatch: pytest.Monke
         model_alias="eval-candidate",
     )
     c = case(
-        input="Text Sam that I'm running late.", expected_tools=[{"name": "send_test_message"}]
+        input="Text Sam that I'm running late.",
+        expected_tools=[{"name": "send_test_message"}],
+        expect_confirmation="write",
     )
 
     r = asyncio.run(h.runner.run_case(c))
@@ -234,6 +237,7 @@ def test_runner_scores_a_gated_call_without_running_it(monkeypatch: pytest.Monke
     assert r.reply is not None and r.reply.startswith("I need your OK first")
     assert [t.name for t in r.tool_calls] == ["send_test_message"]
     assert r.tool_calls[0].args == args
+    assert r.confirmation_tier == "write"
     assert SENT_TEST_MESSAGES == []  # paused, never approved
 
 
@@ -394,3 +398,18 @@ def test_score_tool_args_contain() -> None:
     assert good.passed
     assert not dropped.passed
     assert dropped.failures == ["missing call play({'query': 'x', 'device': '*Kitchen*'})"]
+
+
+def test_score_expected_confirmation() -> None:
+    c = case(expect_confirmation="irreversible")
+    paused = CaseResult(case_id="x", alias="local-main", specialist=c.expected_specialist)
+    paused.routed_tier, paused.confirmation_tier = "local", "irreversible"
+    ran = CaseResult(case_id="x", alias="local-main", specialist=c.expected_specialist)
+    ran.routed_tier = "local"
+
+    score(c, paused)
+    score(c, ran)
+
+    assert paused.checks["confirm"] is True and paused.passed
+    assert ran.checks["confirm"] is False
+    assert "no confirmation, expected a irreversible confirmation" in ran.failures

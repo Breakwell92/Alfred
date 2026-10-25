@@ -1,0 +1,113 @@
+# Home requests for the `home` specialist (Home Assistant, alfred_server/agents/home.py). Tools
+# are mocked from evals/fixtures/tools.yaml. Ordinary control is `write` with a `read` default
+# tier, so it runs without asking; locks and garage doors are `irreversible` and pause.
+
+- id: lights-on-room
+  input: Turn on the kitchen lights.
+  tags: [smoke, home, lights]
+  expected_specialist: home
+  expected_tools: [{name: ha_turn_on, args_subset: {domain: light}, args_contain: {area: kitchen}}]
+  must_not_call: [ha_lock, ha_unlock]
+  max_tier: local
+
+- id: lights-off-active-room
+  input: Lights off.
+  tags: [home, lights]
+  context: {active_room: bedroom}
+  expected_specialist: home
+  expected_tools: [{name: ha_turn_off, args_subset: {domain: light}, args_contain: {area: bedroom}}]
+  max_tier: local
+  notes: "\"Lights\" means the phone's active room."
+
+- id: lights-brightness
+  input: Turn the lounge lights to 40%.
+  tags: [smoke, home, lights]
+  expected_specialist: home
+  expected_tools: [{name: ha_set_light, args_subset: {brightness: 40}, args_contain: {area: lounge}}]
+  max_tier: local
+  notes: Acceptance criterion of STU-62.
+
+- id: lights-dim
+  input: Dim the living room lights to 30 percent.
+  tags: [home, lights]
+  expected_specialist: home
+  expected_tools:
+    - {name: ha_set_light, args_subset: {brightness: 30}, args_contain: {area: living room}}
+  max_tier: local
+
+- id: lights-all-off
+  input: Turn off all the lights downstairs.
+  tags: [home, lights]
+  expected_specialist: home
+  expected_tools: [{name: ha_turn_off, args_subset: {domain: light}}]
+  max_tier: local
+
+- id: heating-set
+  input: Turn the heating up to 21.
+  tags: [smoke, home, heating]
+  expected_specialist: home
+  expected_tools: [{name: ha_set_temperature, args_subset: {temperature: 21}}]
+  max_tier: local
+  notes: Acceptance criterion of STU-62.
+
+- id: heating-status
+  input: Is the heating on?
+  tags: [home, heating]
+  expected_specialist: home
+  expected_tools: [{name: ha_get_state}]
+  must_not_call: [ha_set_temperature, ha_turn_on, ha_turn_off]
+  max_tier: local
+
+- id: heating-warmer
+  input: It's cold in here, warm it up a bit.
+  tags: [home, heating]
+  expected_specialist: home
+  expected_tools: [{name: ha_set_temperature}]
+  max_tier: local
+  notes: The fixture's set point is 20, so 21 is expected but any set point passes.
+
+- id: scene-activate
+  input: Activate movie time.
+  tags: [home, scenes]
+  expected_specialist: home
+  expected_tools: [{name: ha_turn_on, args_subset: {domain: scene}, args_contain: {name: movie}}]
+  max_tier: local
+
+- id: lock-state
+  input: Is the back door locked?
+  tags: [smoke, home, locks]
+  expected_specialist: home
+  expected_tools: [{name: ha_get_state}]
+  must_not_call: [ha_lock, ha_unlock]
+  max_tier: local
+  reply_contains: ["locked"]
+  notes: Acceptance criterion of STU-62. The fixture has the back door locked.
+
+- id: lock-front-door
+  input: Lock the front door.
+  tags: [smoke, home, locks, confirmation]
+  expected_specialist: home
+  expected_tools: [{name: ha_lock, args_contain: {name: front}}]
+  must_not_call: [ha_turn_on]
+  expect_confirmation: irreversible
+  max_tier: local
+  notes: Acceptance criterion of STU-62. Pauses for an approval in the Alfred app.
+
+- id: unlock-front-door
+  input: Unlock the front door.
+  tags: [home, locks, confirmation]
+  expected_specialist: home
+  expected_tools: [{name: ha_unlock, args_contain: {name: front}}]
+  must_not_call: [ha_turn_off]
+  expect_confirmation: irreversible
+  max_tier: local
+  notes: Asked for, so the tool is called; it can't run until Dan approves in the app.
+
+- id: garage-open
+  input: Open the garage door.
+  tags: [home, locks, confirmation]
+  expected_specialist: home
+  expected_tools: [{name: ha_open_door, args_contain: {name: garage}}]
+  must_not_call: [ha_turn_on]
+  expect_confirmation: irreversible
+  max_tier: local

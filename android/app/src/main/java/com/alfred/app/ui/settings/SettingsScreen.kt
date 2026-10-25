@@ -5,14 +5,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
@@ -29,6 +33,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
         onServerUrlChange = viewModel::onServerUrlChange,
         onApiTokenChange = viewModel::onApiTokenChange,
         onSave = viewModel::save,
+        onPairingCodeChange = viewModel::onPairingCodeChange,
+        onPair = viewModel::pair,
     )
 }
 
@@ -38,10 +44,13 @@ fun SettingsContent(
     onServerUrlChange: (String) -> Unit,
     onApiTokenChange: (String) -> Unit,
     onSave: () -> Unit,
+    onPairingCodeChange: (String) -> Unit,
+    onPair: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -74,6 +83,37 @@ fun SettingsContent(
         if (state.saved) {
             Text("Saved", style = MaterialTheme.typography.bodyMedium)
         }
+
+        HorizontalDivider()
+        Text("Approvals", style = MaterialTheme.typography.titleMedium)
+        Text(
+            state.pairedDeviceName?.let { "Paired as $it. This app can approve irreversible actions." }
+                ?: "Not paired. Irreversible actions (like unlocking a door) can only be approved " +
+                "from a paired app.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedTextField(
+            value = state.pairingCode,
+            onValueChange = onPairingCodeChange,
+            label = { Text("Pairing code") },
+            supportingText = {
+                Text(
+                    state.pairingError
+                        ?: "On the server: python -m alfred_server.devices pair --name <phone>",
+                )
+            },
+            isError = state.pairingError != null,
+            singleLine = true,
+            enabled = state.loaded && !state.pairing,
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
+                autoCorrectEnabled = false,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(onClick = onPair, enabled = state.loaded && !state.pairing) {
+            Text(if (state.pairedDeviceName == null) "Pair" else "Pair again")
+        }
     }
 }
 
@@ -86,6 +126,8 @@ private fun SettingsContentPreview() {
             onServerUrlChange = {},
             onApiTokenChange = {},
             onSave = {},
+            onPairingCodeChange = {},
+            onPair = {},
         )
     }
 }

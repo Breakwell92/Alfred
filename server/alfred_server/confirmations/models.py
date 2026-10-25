@@ -15,8 +15,10 @@ from alfred_server.connectors.models import Risk
 Tier = Risk
 TIER_ORDER: dict[Tier, int] = {"read": 0, "write": 1, "irreversible": 2}
 
-# Where a request (or an approval) came from. `app_ui` is the authenticated app's own
-# confirmation screen; `scheduled` is an unattended run, which can never approve anything.
+# Where a request (or an approval) came from. `app_ui` is the Alfred app's own confirmation
+# screen, proven by a signature from a paired device (ADR 0016; `confirmations/api.py`
+# treats an unsigned `app_ui` claim as `text`). `scheduled` is an unattended run, which can
+# never approve anything.
 Channel = Literal["text", "voice", "app_ui", "scheduled"]
 
 CHANNEL_FOR_DEVICE: dict[DeviceType, Channel] = {

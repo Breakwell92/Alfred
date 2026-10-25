@@ -54,6 +54,14 @@ class ConfirmationsUnavailableError(RuntimeError):
     """The confirmation tables can't be read or written (Postgres down)."""
 
 
+class IrreversibleRelaxError(PermissionError):
+    """A change would take a tool out of `irreversible` without the server CLI.
+
+    Over the API it would let the shared API token undo what only a signed `app_ui` approval
+    may do (ADR 0016), so it's allowed only from `python -m alfred_server.confirmations`.
+    """
+
+
 def parse_yes_no(text: str) -> YesNo | None:
     """ "yes" or "no" if the whole message is a plain answer, else None."""
     words = re.sub(r"[^\w\s']", " ", text.lower().replace("’", "'"))
@@ -111,7 +119,33 @@ class ConfirmationService:
             raise ConfirmationsUnavailableError("Permission settings are unavailable") from exc
         return ToolPolicy(self.registry, overrides)
 
-    def set_override(self, connector_id: str, tool_name: str, risk: Tier | None) -> None:
+    def set_override(
+        self,
+        connector_id: str,
+        tool_name: str,
+        risk: Tier | None,
+        *,
+        allow_relaxing_irreversible: bool = False,
+    ) -> None:
+        """Store (or with None, remove) Dan's override for one declared tool.
+
+        A change that takes the tool's effective tier from `irreversible` to anything lower
+        raises `IrreversibleRelaxError` unless `allow_relaxing_irreversible` (the server CLI).
+        Raises `KeyError` for a tool no connector declares.
+        """
+        connector = self.registry.get(connector_id)
+        meta = (
+            next((t for t in connector.tools if t.name == tool_name), None) if connector else None
+        )
+        if meta is None:
+            raise KeyError(f"{connector_id}/{tool_name}")
+        if not allow_relaxing_irreversible:
+            current = self.store.overrides().get((connector_id, tool_name), meta.tier)
+            if current == "irreversible" and (risk or meta.tier) != "irreversible":
+                raise IrreversibleRelaxError(
+                    f"{connector_id}/{tool_name} is irreversible; relax it on the server with "
+                    "python -m alfred_server.confirmations set"
+                )
         self.store.set_override(connector_id, tool_name, risk)
 
     # --- Records ----------------------------------------------------------------------------

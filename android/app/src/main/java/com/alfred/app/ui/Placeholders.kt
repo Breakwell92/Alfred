@@ -14,6 +14,10 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ConnectorsScreen() = PlaceholderScreen("Connectors", "No connectors yet.")
 
+/** Persona list, preview and Engage arrive with STU-118 (personas themselves with STU-66). */
+@Composable
+fun VoiceProtocolScreen() = PlaceholderScreen("Voice Protocol", "Personas aren't here yet.")
+
 /** Recent requests and actions; filled in by later tickets. */
 @Composable
 fun ActivityScreen() = PlaceholderScreen("Activity", "Nothing here yet.")

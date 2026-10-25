@@ -3,6 +3,7 @@ package com.alfred.app.ui.home
 import com.alfred.app.data.server.ConnectionStatus
 import com.alfred.app.data.settings.AppSettings
 import com.alfred.app.data.settings.SettingsRepository
+import com.alfred.app.testing.FakeProfileSettingsRepository
 import com.alfred.app.testing.FakeServerClient
 import com.alfred.app.testing.FakeSettingsRepository
 import com.alfred.app.testing.MainDispatcherRule
@@ -28,7 +29,9 @@ class HomeViewModelTest {
     private val settings = FakeSettingsRepository(initial)
     private val server = FakeServerClient()
 
-    private fun viewModel() = HomeViewModel(settings, server, pollIntervalMillis = 10_000)
+    private val profile = FakeProfileSettingsRepository()
+
+    private fun viewModel() = HomeViewModel(settings, server, profile, pollIntervalMillis = 10_000)
 
     @Test
     fun `shows the server's answer`() = runTest(mainDispatcher.dispatcher) {
@@ -113,7 +116,7 @@ class HomeViewModelTest {
 
             override suspend fun savePairing(deviceId: String, name: String) = Unit
         }
-        val vm = HomeViewModel(flaky, server, pollIntervalMillis = 10_000)
+        val vm = HomeViewModel(flaky, server, profile, pollIntervalMillis = 10_000)
         backgroundScope.launch { vm.status.collect {} }
         assertEquals(ConnectionStatus.Unreachable("Couldn't read settings: corrupt"), vm.status.value)
 
@@ -136,11 +139,56 @@ class HomeViewModelTest {
 
             override suspend fun savePairing(deviceId: String, name: String) = Unit
         }
-        val vm = HomeViewModel(flaky, server, pollIntervalMillis = 10_000)
+        val vm = HomeViewModel(flaky, server, profile, pollIntervalMillis = 10_000)
         backgroundScope.launch { vm.status.collect {} }
 
         readable = true
         advanceTimeBy(10_001)
         assertEquals(ConnectionStatus.Connected, vm.status.value)
+    }
+
+    @Test
+    fun `caches the active persona when the server comes up`() = runTest(mainDispatcher.dispatcher) {
+        server.persona = "Butler"
+        val vm = viewModel()
+        backgroundScope.launch { vm.status.collect {} }
+        backgroundScope.launch { vm.profile.collect {} }
+
+        assertEquals("Butler", vm.profile.value.personaName)
+        assertEquals(1, server.personaAsked)
+
+        // Still connected on the next poll: no need to ask again.
+        advanceTimeBy(10_001)
+        assertEquals(1, server.personaAsked)
+
+        // Down, then back up: asks again.
+        server.status = ConnectionStatus.Unreachable("down")
+        advanceTimeBy(10_000)
+        server.status = ConnectionStatus.Connected
+        server.persona = "Dry"
+        advanceTimeBy(10_000)
+        assertEquals(2, server.personaAsked)
+        assertEquals("Dry", vm.profile.value.personaName)
+    }
+
+    @Test
+    fun `keeps the cached persona when the server can't say`() = runTest(mainDispatcher.dispatcher) {
+        profile.update { it.copy(personaName = "Butler") }
+        server.persona = null
+        val vm = viewModel()
+        backgroundScope.launch { vm.status.collect {} }
+        backgroundScope.launch { vm.profile.collect {} }
+
+        assertEquals(1, server.personaAsked)
+        assertEquals("Butler", vm.profile.value.personaName)
+    }
+
+    @Test
+    fun `does not ask for the persona while the server is down`() = runTest(mainDispatcher.dispatcher) {
+        server.status = ConnectionStatus.Unauthorised
+        val vm = viewModel()
+        backgroundScope.launch { vm.status.collect {} }
+
+        assertEquals(0, server.personaAsked)
     }
 }

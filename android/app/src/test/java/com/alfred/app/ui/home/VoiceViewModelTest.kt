@@ -158,4 +158,14 @@ class VoiceViewModelTest {
             bytes[2 * i + 1] = (value shr 8 and 0xFF).toByte()
         }
     }
+
+    @Test
+    fun `tapping the disabled mic retries the link now`() = runTest(mainDispatcher.dispatcher) {
+        val (vm, _) = viewModel()
+        val before = connection.reconnects
+
+        vm.reconnect()
+
+        assertEquals(before + 1, connection.reconnects)
+    }
 }

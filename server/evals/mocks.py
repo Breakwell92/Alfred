@@ -20,6 +20,7 @@ from agno.tools import Toolkit
 from alfred_server.agents.context import RequestContext
 from alfred_server.connectors.models import AgnoToolkitSource, Credentials
 from alfred_server.connectors.registry import ConnectorRegistry, default_registry
+from alfred_server.connectors.service import restrict_toolkit
 
 FIXTURES_FILE = Path(__file__).parent / "fixtures" / "tools.yaml"
 UNMOCKED_RESULT = '{"ok": true}'
@@ -80,9 +81,5 @@ class MockToolLoader:
             if not isinstance(connector.tool_source, AgnoToolkitSource):
                 continue
             toolkit = connector.tool_source.factory(Credentials())
-            declared = set(connector.tool_names)
-            for functions in (toolkit.functions, toolkit.async_functions):
-                for name in [n for n in functions if n not in declared]:
-                    del functions[name]
-            loaded.append(toolkit)
+            loaded.append(restrict_toolkit(toolkit, set(connector.tool_names)))
         return loaded

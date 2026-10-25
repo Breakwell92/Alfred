@@ -41,6 +41,9 @@ BUSY = "Spotify is busy right now. Try again in a moment."
 # Words people add to a device name that Spotify's name won't have ("the kitchen speaker").
 _FILLER = {"the", "my", "a", "in", "on", "speaker", "speakers", "device", "spotify"}
 _MATCH_CUTOFF = 0.6
+# How many of Dan's playlists to look through (Spotify pages them 50 at a time).
+PLAYLIST_PAGE = 50
+MAX_PLAYLISTS = 300
 
 
 class SpotifyError(Exception):
@@ -58,11 +61,12 @@ def _normalise(name: str) -> str:
     return " ".join(kept or words)
 
 
-def match_device(name: str, devices: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The device in `devices` that a spoken `name` means, or None.
+def match_devices(name: str, devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The devices a spoken `name` could mean: one, several (ambiguous) or none.
 
     Tries an exact match (ignoring case, punctuation and words like "the" and "speaker"),
-    then one name containing the other, then shared words, then close spelling.
+    then one name containing the other, then shared words, then close spelling, and stops at
+    the first of those that matches anything.
     """
     wanted = _normalise(name)
     named = [(d, _normalise(str(d.get("name", "")))) for d in devices]
@@ -73,24 +77,32 @@ def match_device(name: str, devices: list[dict[str, Any]]) -> dict[str, Any] | N
     ):
         hits = [d for d, n in named if checks(n)]
         if hits:
-            return hits[0]
+            return hits
     scored = [(difflib.SequenceMatcher(None, wanted, n).ratio(), d) for d, n in named]
     best = max(scored, key=lambda s: s[0], default=None)
     if best is not None and best[0] >= _MATCH_CUTOFF:
-        return best[1]
-    return None
+        return [best[1]]
+    return []
+
+
+def _or_list(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
 
 
 def _artists(item: dict[str, Any]) -> str:
     return ", ".join(a.get("name", "") for a in item.get("artists") or [] if a)
 
 
-def _describe(item: dict[str, Any]) -> str:
-    """ "Dreams by Fleetwood Mac" for a track or album, the name for an artist or playlist."""
+def _describe(item: dict[str, Any], *, owner: bool = False) -> str:
+    """ "Dreams by Fleetwood Mac" for a track or album, the name for an artist or playlist.
+
+    `owner` adds whose playlist it is, for one found by searching rather than in Dan's library.
+    """
     name = str(item.get("name", "something"))
     by = _artists(item)
     if item.get("type") == "playlist":
-        return f"the playlist {name}"
+        who = (item.get("owner") or {}).get("display_name") if owner else None
+        return f"the playlist {name} by {who}" if who else f"the playlist {name}"
     return f"{name} by {by}" if by else name
 
 
@@ -190,31 +202,35 @@ class SpotifyTools(Toolkit):
         body = await self.client.request("GET", "/me/player/devices") or {}
         return [d for d in body.get("devices") or [] if isinstance(d, dict)]
 
-    async def _device_id(self, device: str | None) -> str | None:
-        """The id of the device called `device`; None (the active one) if no name is given.
+    async def _device(self, device: str | None) -> dict[str, Any] | None:
+        """The device called `device`; None (the active one) if no name is given.
 
-        Raises `SpotifyError` saying which devices there are if none matches.
+        Raises `SpotifyError` saying which devices there are if none matches, or asking which
+        one if several do.
         """
         if not device:
             return None
         devices = await self._devices()
         if not devices:
             raise SpotifyError(NO_DEVICE)
-        found = match_device(device, devices)
-        if found is None or not found.get("id"):
+        found = [d for d in match_devices(device, devices) if d.get("id")]
+        if not found:
             names = ", ".join(str(d.get("name")) for d in devices)
             raise SpotifyError(f"I can't see a Spotify device called {device}. There's {names}.")
-        if found.get("is_restricted"):
-            raise SpotifyError(f"Spotify can't be controlled on {found.get('name')}.")
-        return str(found["id"])
+        if len(found) > 1:
+            names = _or_list([str(d.get("name")) for d in found])
+            raise SpotifyError(f"Did you mean {names}?")
+        if found[0].get("is_restricted"):
+            raise SpotifyError(f"Spotify can't be controlled on {found[0].get('name')}.")
+        return found[0]
 
-    async def _device_name(self, device_id: str | None) -> str | None:
-        if device_id is None:
-            return None
-        for d in await self._devices():
-            if d.get("id") == device_id:
-                return str(d.get("name"))
-        return None
+    @staticmethod
+    def _id(device: dict[str, Any] | None) -> str | None:
+        return str(device["id"]) if device else None
+
+    @staticmethod
+    def _on(device: dict[str, Any] | None) -> str:
+        return f" on {device.get('name')}" if device else ""
 
     async def _search(self, query: str, kinds: str, limit: int = 5) -> dict[str, list[Any]]:
         body = await self.client.request(
@@ -227,9 +243,21 @@ class SpotifyTools(Toolkit):
             found[kind] = [i for i in items if isinstance(i, dict)]
         return found
 
+    async def _playlists(self) -> list[dict[str, Any]]:
+        """Dan's playlists (owned and followed), up to `MAX_PLAYLISTS`."""
+        playlists: list[dict[str, Any]] = []
+        for offset in range(0, MAX_PLAYLISTS, PLAYLIST_PAGE):
+            body = await self.client.request(
+                "GET", "/me/playlists", params={"limit": PLAYLIST_PAGE, "offset": offset}
+            )
+            page = (body or {}).get("items") or []
+            playlists += [p for p in page if isinstance(p, dict)]
+            if not page or not (body or {}).get("next"):
+                break
+        return playlists
+
     async def _my_playlist(self, name: str) -> dict[str, Any] | None:
-        body = await self.client.request("GET", "/me/playlists", params={"limit": 50}) or {}
-        playlists = [p for p in body.get("items") or [] if isinstance(p, dict)]
+        playlists = await self._playlists()
         wanted = _normalise(name).removesuffix(" playlist")
         by_name = {_normalise(str(p.get("name", ""))): p for p in playlists}
         if wanted in by_name:
@@ -237,16 +265,22 @@ class SpotifyTools(Toolkit):
         close = difflib.get_close_matches(wanted, list(by_name), n=1, cutoff=0.8)
         return by_name[close[0]] if close else None
 
-    async def _find(self, query: str, kind: SearchKind | None) -> dict[str, Any] | None:
-        """What "play <query>" most likely means: Dan's own playlist, an artist or a track."""
-        if kind in (None, "playlist"):
-            mine = await self._my_playlist(query)
-            if mine is not None:
-                return mine
+    async def _find(
+        self, query: str, kind: SearchKind | None, mine: bool
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """What "play <query>" most likely means: Dan's own playlist, an artist or a track.
+
+        Returns the item and whether it's from Dan's library. With `mine` only his playlists
+        are looked at, so a stranger's playlist of the same name is never played.
+        """
+        if mine or kind in (None, "playlist"):
+            own = await self._my_playlist(query)
+            if own is not None or mine:
+                return own, own is not None
         if kind is not None:
             # Not limit=1: Spotify counts the null entries it hides towards the limit.
             items = (await self._search(query, kind)).get(kind) or []
-            return items[0] if items else None
+            return (items[0] if items else None), False
         found = await self._search(query, "artist,track", limit=1)
         artist = next(iter(found.get("artist") or []), None)
         if artist is not None:
@@ -254,13 +288,9 @@ class SpotifyTools(Toolkit):
                 None, _normalise(query), _normalise(str(artist.get("name", "")))
             ).ratio()
             if ratio >= 0.8:
-                return artist
+                return artist, False
         track = next(iter(found.get("track") or []), None)
-        return track or artist
-
-    @staticmethod
-    def _where(name: str | None) -> str:
-        return f" on {name}" if name else ""
+        return track or artist, False
 
     # --- Read ---------------------------------------------------------------------------------
 
@@ -329,10 +359,9 @@ class SpotifyTools(Toolkit):
             The playlists' names.
         """
         try:
-            body = await self.client.request("GET", "/me/playlists", params={"limit": 50}) or {}
+            names = [str(p.get("name")) for p in await self._playlists()]
         except SpotifyError as e:
             return e.message
-        names = [str(p.get("name")) for p in body.get("items") or [] if isinstance(p, dict)]
         if not names:
             return "You don't have any Spotify playlists."
         return "Your playlists: " + "; ".join(names) + "."
@@ -340,7 +369,11 @@ class SpotifyTools(Toolkit):
     # --- Playback -------------------------------------------------------------------------------
 
     async def spotify_play(
-        self, query: str | None = None, kind: SearchKind | None = None, device: str | None = None
+        self,
+        query: str | None = None,
+        kind: SearchKind | None = None,
+        device: str | None = None,
+        mine: bool = False,
     ) -> str:
         """Play music on Spotify, or resume what was playing if no query is given.
 
@@ -351,25 +384,32 @@ class SpotifyTools(Toolkit):
                 otherwise. Use "playlist" for moods.
             device: The speaker or device to play on, as Dan said it (e.g. "kitchen");
                 leave out for the one already playing.
+            mine: True when Dan says it's his ("my Discover Weekly", "my running playlist"):
+                only his own playlists are played, never someone else's of the same name.
 
         Returns:
             What started playing and where.
         """
         try:
-            device_id = await self._device_id(device)
+            target = await self._device(device)
             body: dict[str, Any] | None = None
             what = "Resumed Spotify"
             if query:
-                item = await self._find(query, kind)
+                item, own = await self._find(query, kind, mine)
+                if item is None and mine:
+                    return (
+                        f"I can't find {query} in your Spotify playlists. Spotify hides some of "
+                        "its own playlists from apps; follow or copy it to make it findable."
+                    )
                 if item is None or not item.get("uri"):
                     return f"I couldn't find {query} on Spotify."
                 uri = str(item["uri"])
                 body = {"uris": [uri]} if item.get("type") == "track" else {"context_uri": uri}
-                what = f"Playing {_describe(item)}"
+                what = f"Playing {_describe(item, owner=not own)}"
             await self.client.request(
-                "PUT", "/me/player/play", params={"device_id": device_id}, json=body
+                "PUT", "/me/player/play", params={"device_id": self._id(target)}, json=body
             )
-            return what + self._where(await self._device_name(device_id)) + "."
+            return what + self._on(target) + "."
         except SpotifyError as e:
             return e.message
 
@@ -421,14 +461,13 @@ class SpotifyTools(Toolkit):
         """
         percent = max(0, min(100, int(percent)))
         try:
-            device_id = await self._device_id(device)
+            target = await self._device(device)
             await self.client.request(
                 "PUT",
                 "/me/player/volume",
-                params={"volume_percent": percent, "device_id": device_id},
+                params={"volume_percent": percent, "device_id": self._id(target)},
             )
-            where = self._where(await self._device_name(device_id))
-            return f"Volume set to {percent}%{where}."
+            return f"Volume set to {percent}%{self._on(target)}."
         except SpotifyError as e:
             return e.message
 
@@ -478,13 +517,13 @@ class SpotifyTools(Toolkit):
             Where it's playing now.
         """
         try:
-            device_id = await self._device_id(device)
-            if device_id is None:
+            target = await self._device(device)
+            if target is None:
                 return "Which device should I move it to?"
             await self.client.request(
-                "PUT", "/me/player", json={"device_ids": [device_id], "play": True}
+                "PUT", "/me/player", json={"device_ids": [self._id(target)], "play": True}
             )
-            return f"Moved to {await self._device_name(device_id) or device}."
+            return f"Moved to {target.get('name') or device}."
         except SpotifyError as e:
             return e.message
 

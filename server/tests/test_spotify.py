@@ -12,11 +12,11 @@ from alfred_server.connectors.builtin.spotify import (
     SIGNED_OUT,
     SPOTIFY_CONNECTOR,
     build_spotify_toolkit,
-    match_device,
+    match_devices,
 )
 from alfred_server.connectors.models import AgnoToolkitSource, Connector, Credentials, ToolMeta
 from alfred_server.connectors.registry import ConnectorRegistry, default_registry
-from tests.spotify_fakes import DISCOVER, KITCHEN, PHONE, FakeSpotify, spotify_error
+from tests.spotify_fakes import DISCOVER, KITCHEN, PHONE, STRANGERS, FakeSpotify, spotify_error
 
 
 def run(coro: Any) -> Any:
@@ -111,13 +111,13 @@ def test_default_tier_above_risk_is_rejected() -> None:
     ],
 )
 def test_match_device(spoken: str, expected: str | None) -> None:
-    found = match_device(spoken, [KITCHEN, PHONE])
+    found = match_devices(spoken, [KITCHEN, PHONE])
 
-    assert (found or {}).get("name") == expected
+    assert [d["name"] for d in found] == ([expected] if expected else [])
 
 
 def test_match_device_with_no_devices() -> None:
-    assert match_device("kitchen", []) is None
+    assert match_devices("kitchen", []) == []
 
 
 # --- Playback -----------------------------------------------------------------------------------
@@ -151,10 +151,12 @@ def test_play_a_song_by_name_plays_the_track(spotify: FakeSpotify) -> None:
     }
 
 
-def test_play_a_mood_searches_playlists_skipping_hidden_ones(spotify: FakeSpotify) -> None:
+def test_play_a_mood_searches_playlists_and_says_whose(spotify: FakeSpotify) -> None:
     result = run(spotify.tools().spotify_play("relaxing dinner", kind="playlist"))
 
-    assert result == "Playing the playlist Discover Weekly."
+    # Hidden (null) results are skipped; a playlist from search isn't Dan's, so say whose.
+    assert result == "Playing the playlist Chill Dinner by jo_b."
+    assert spotify.json(spotify.last("PUT", "/me/player/play")) == {"context_uri": STRANGERS["uri"]}
     assert spotify.last("GET", "/search").url.params["type"] == "playlist"
 
 
@@ -310,3 +312,72 @@ def test_network_failure() -> None:
     tools = SpotifyTools(SpotifyClient("t", httpx.MockTransport(fail)))
 
     assert run(tools.spotify_pause()) == "I couldn't reach Spotify."
+
+
+# --- Review round 1 (PR #18) ----------------------------------------------------------------
+
+
+def test_my_playlist_never_plays_a_strangers_one(spotify: FakeSpotify) -> None:
+    spotify.routes["GET /v1/me/playlists"] = {"items": []}  # Spotify hid Discover Weekly
+
+    result = run(spotify.tools().spotify_play("Discover Weekly", mine=True))
+
+    assert result.startswith("I can't find Discover Weekly in your Spotify playlists.")
+    assert "GET /search" not in spotify.calls()
+    assert spotify.calls("PUT") == []
+
+
+def test_my_playlist_still_plays_when_found(spotify: FakeSpotify) -> None:
+    result = run(spotify.tools().spotify_play("Discover Weekly", mine=True))
+
+    assert result == "Playing the playlist Discover Weekly."
+
+
+def test_playlists_are_read_past_the_first_page() -> None:
+    first = [
+        {"type": "playlist", "uri": f"spotify:playlist:{i}", "name": f"P{i}"} for i in range(50)
+    ]
+
+    def pages(request: httpx.Request) -> dict[str, object]:
+        if request.url.params["offset"] == "0":
+            return {"items": first, "next": "https://api.spotify.com/v1/me/playlists?offset=50"}
+        return {"items": [DISCOVER], "next": None}
+
+    spotify = FakeSpotify({"GET /v1/me/playlists": pages})
+
+    result = run(spotify.tools().spotify_play("Discover Weekly", mine=True))
+
+    assert result == "Playing the playlist Discover Weekly."
+    assert spotify.calls("GET").count("GET /me/playlists") == 2
+    listed = run(spotify.tools().spotify_my_playlists())
+    assert listed.endswith("P49; Discover Weekly.")
+
+
+def test_playlist_paging_stops_at_the_cap() -> None:
+    def endless(request: httpx.Request) -> dict[str, object]:
+        return {"items": [DISCOVER], "next": "more"}
+
+    spotify = FakeSpotify({"GET /v1/me/playlists": endless})
+
+    run(spotify.tools().spotify_my_playlists())
+
+    assert spotify.calls("GET").count("GET /me/playlists") == 6  # 300 / 50
+
+
+def test_an_ambiguous_device_asks_which() -> None:
+    tv = {"id": "dev-tv", "name": "Living Room TV", "type": "TV"}
+    speaker = {"id": "dev-lr", "name": "Living Room Speaker", "type": "Speaker"}
+    spotify = FakeSpotify({"GET /v1/me/player/devices": {"devices": [tv, speaker]}})
+
+    result = run(spotify.tools().spotify_play("Dreams", device="living room"))
+
+    # "speaker" is a filler word, so "Living Room Speaker" normalises to "living room" exactly.
+    assert result == "Playing Dreams by Fleetwood Mac on Living Room Speaker."
+    result = run(spotify.tools().spotify_volume(30, device="living"))
+    assert result == "Did you mean Living Room TV or Living Room Speaker?"
+
+
+def test_a_targeted_play_lists_devices_once(spotify: FakeSpotify) -> None:
+    run(spotify.tools().spotify_play("Dreams", device="kitchen"))
+
+    assert spotify.calls("GET").count("GET /me/player/devices") == 1

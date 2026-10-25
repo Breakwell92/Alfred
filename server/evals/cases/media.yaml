@@ -13,7 +13,8 @@
   input: Play my Discover Weekly on the kitchen speaker.
   tags: [smoke, media, music]
   expected_specialist: media
-  expected_tools: [{name: spotify_play, args_subset: {query: Discover Weekly}}]
+  expected_tools:
+    - {name: spotify_play, args_subset: {query: Discover Weekly}, args_contain: {device: kitchen}}
   max_tier: local
   notes: The device is passed as spoken; "kitchen" and "kitchen speaker" both resolve.
 

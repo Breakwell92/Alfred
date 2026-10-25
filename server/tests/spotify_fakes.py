@@ -22,6 +22,13 @@ DREAMS = {
 }
 FLEETWOOD = {"type": "artist", "uri": "spotify:artist:a-fm", "name": "Fleetwood Mac"}
 DISCOVER = {"type": "playlist", "uri": "spotify:playlist:p-dw", "name": "Discover Weekly"}
+# A public playlist that search finds: someone else's.
+STRANGERS = {
+    "type": "playlist",
+    "uri": "spotify:playlist:p-x",
+    "name": "Chill Dinner",
+    "owner": {"display_name": "jo_b"},
+}
 
 
 def spotify_error(status: int, reason: str = "", message: str = "") -> httpx.Response:
@@ -33,8 +40,9 @@ def spotify_error(status: int, reason: str = "", message: str = "") -> httpx.Res
 class FakeSpotify:
     """Answers the Web API calls the toolkit makes; records each one.
 
-    `routes` maps "METHOD /path" to a JSON body or an `httpx.Response`; anything unlisted
-    answers 204 (Spotify's reply to a player command).
+    `routes` maps "METHOD /path" to a JSON body, an `httpx.Response` or a function of the
+    request returning either; anything unlisted answers 204 (Spotify's reply to a player
+    command).
     """
 
     def __init__(self, routes: dict[str, Any] | None = None) -> None:
@@ -44,7 +52,7 @@ class FakeSpotify:
             "GET /v1/search": {
                 "artists": {"items": [FLEETWOOD]},
                 "tracks": {"items": [DREAMS]},
-                "playlists": {"items": [None, DISCOVER]},
+                "playlists": {"items": [None, STRANGERS]},
             },
             "GET /v1/me/player": {
                 "is_playing": True,
@@ -59,6 +67,8 @@ class FakeSpotify:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         answer = self.routes.get(f"{request.method} {request.url.path}")
+        if callable(answer):
+            answer = answer(request)
         if answer is None:
             return httpx.Response(204)
         if isinstance(answer, httpx.Response):

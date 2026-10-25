@@ -18,7 +18,8 @@ MEDIA_INSTRUCTIONS = [
     "paused or changed without calling one.",
     "To play something call spotify_play with what Dan asked for as the query, e.g. "
     "'Fleetwood Mac' or 'Discover Weekly'. For a mood or occasion ('something relaxing for "
-    "dinner') use a short query like 'relaxing dinner' with kind 'playlist'.",
+    "dinner') use a short query like 'relaxing dinner' with kind 'playlist'. When Dan says "
+    "it's his ('my Discover Weekly', 'my running playlist'), set mine to true.",
     "When Dan names a speaker or device ('on the kitchen speaker'), pass it as device, as he "
     "said it. Otherwise leave device out.",
     "'Pause', 'stop the music' = spotify_pause. 'Carry on', 'resume' = spotify_play with no "

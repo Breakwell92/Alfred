@@ -155,6 +155,13 @@ def _matches(expected: Any, actual: Any) -> bool:
     return bool(expected == actual)
 
 
+def _contains(expected: dict[str, str], actual: dict[str, Any]) -> bool:
+    return all(
+        isinstance(actual.get(k), str) and v.casefold() in actual[k].casefold()
+        for k, v in expected.items()
+    )
+
+
 def score(case: EvalCase, result: CaseResult) -> None:
     """Fill `result.checks` and `result.failures` for `case`."""
     checks: dict[str, bool | None] = {}
@@ -167,11 +174,17 @@ def score(case: EvalCase, result: CaseResult) -> None:
     missing = [
         t
         for t in case.expected_tools
-        if not any(c.name == t.name and _matches(t.args_subset, c.args) for c in result.tool_calls)
+        if not any(
+            c.name == t.name
+            and _matches(t.args_subset, c.args)
+            and _contains(t.args_contain, c.args)
+            for c in result.tool_calls
+        )
     ]
     checks["tools"] = not missing if case.expected_tools else None
     for t in missing:
-        failures.append(f"missing call {t.name}({t.args_subset or ''})")
+        wanted = {**t.args_subset, **{k: f"*{v}*" for k, v in t.args_contain.items()}}
+        failures.append(f"missing call {t.name}({wanted or ''})")
 
     if case.must_not_call:
         banned = set(case.must_not_call)

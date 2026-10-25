@@ -36,7 +36,7 @@ Scopes requested: `user-read-playback-state`, `user-modify-playback-state`, `use
 | `spotify_devices` | read | no | Devices that can play now |
 | `spotify_search` | read | no | Search tracks, artists, albums or playlists |
 | `spotify_my_playlists` | read | no | Dan's playlists |
-| `spotify_play` | write | no (default tier `read`) | Play a query (own playlists first, then search) on an optional device; no query resumes |
+| `spotify_play` | write | no (default tier `read`) | Play a query (own playlists first, then search; "my …" only ever plays your own) on an optional device; no query resumes |
 | `spotify_pause`, `spotify_next`, `spotify_previous` | write | no | Playback |
 | `spotify_volume`, `spotify_shuffle`, `spotify_repeat` | write | no | Settings |
 | `spotify_transfer` | write | no | Move playback to another device |
@@ -52,10 +52,10 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json
 
 ## Devices
 
-Spotify only lists a device while it can play: the Spotify app open on a phone or computer, or a Spotify Connect speaker that's awake. Say devices as you like ("the kitchen speaker", "kitchen"): names are matched loosely. If nothing is listed, Alfred says "No Spotify device is active. Open Spotify on your phone or a speaker and try again." Rename devices in their own apps to make them easy to say.
+Spotify only lists a device while it can play: the Spotify app open on a phone or computer, or a Spotify Connect speaker that's awake. Say devices as you like ("the kitchen speaker", "kitchen"): names are matched loosely. If a name fits more than one device, Alfred asks which. If nothing is listed, Alfred says "No Spotify device is active. Open Spotify on your phone or a speaker and try again." Rename devices in their own apps to make them easy to say.
 
 ## Known limits
 
 - **Premium.** Without it every playback command answers "Spotify only allows playback control with a Premium account."
-- **Spotify's own playlists.** Since late 2024 Spotify hides its algorithmic and editorial playlists (Discover Weekly, Release Radar, Daily Mixes) from newer API apps. If Discover Weekly isn't in `spotify_my_playlists`, follow it or save a copy into your own playlist.
+- **Spotify's own playlists.** Since late 2024 Spotify hides its algorithmic and editorial playlists (Discover Weekly, Release Radar, Daily Mixes) from newer API apps. If Discover Weekly isn't in `spotify_my_playlists`, "play my Discover Weekly" says it can't find it (it won't play someone else's playlist of that name): follow it or save a copy into your own playlist.
 - Development-mode apps allow up to 25 listed users, which is plenty for Dan.

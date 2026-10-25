@@ -92,7 +92,7 @@ def _fingerprint(creds: Credentials) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _restrict_toolkit(toolkit: Toolkit, allowed: set[str]) -> Toolkit:
+def restrict_toolkit(toolkit: Toolkit, allowed: set[str]) -> Toolkit:
     """Drop any function the connector didn't declare (and so has no risk metadata for)."""
     for registry in (toolkit.functions, toolkit.async_functions):
         for name in list(registry):
@@ -451,7 +451,7 @@ class ConnectorService:
         source = connector.tool_source
         allowed = set(connector.tool_names)
         if isinstance(source, AgnoToolkitSource):
-            return _restrict_toolkit(source.factory(creds), allowed)
+            return restrict_toolkit(source.factory(creds), allowed)
         fingerprint = _fingerprint(creds)
         cached = self._mcp.get(connector.id)
         if cached is not None:

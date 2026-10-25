@@ -41,7 +41,7 @@ The three sessions are created once per model and run single-threaded. Models ar
 - another app is recording (`AudioRecordingCallback`, ignoring our own audio sessions);
 - Do Not Disturb (which covers bedtime mode) is on, if "Pause while Do Not Disturb is on" is set, which is the default.
 
-**End of speech (temporary).** A wake word turn has no button release. Until Silero VAD (STU-69), `EnergyEndOfSpeech` (`data/voice/EndOfSpeech.kt`) ends the turn:
+**End of speech (temporary; replaced by Silero VAD in [ADR 0024](0024-end-of-speech-vad.md)).** A wake word turn has no button release. Until Silero VAD (STU-69), `EnergyEndOfSpeech` (`data/voice/EndOfSpeech.kt`) ended the turn. It is now the fallback when the model can't load:
 - after 1 s of quiet once speech has started;
 - after 5 s if nobody speaks;
 - at 15 s in any case.
@@ -78,7 +78,7 @@ If false accepts are too high, lower the sensitivity. If wakes are missed at 3 m
 
 ## Consequences
 
-- STU-69 (Silero VAD) replaces `EnergyEndOfSpeech`. openWakeWord's release also includes `silero_vad.onnx`, so it can reuse ONNX Runtime.
+- STU-69 (Silero VAD, [ADR 0024](0024-end-of-speech-vad.md)) replaced `EnergyEndOfSpeech`, reusing ONNX Runtime. A wake turn where nobody speaks is now cancelled quietly with a soft chime.
 - STU-70 (custom "Hey Alfred") adds a model file and a `StockWakeWord`-like entry. The detector doesn't change.
 - STU-71 has to add boot start (within Android 15's rules) and battery-optimisation guidance. Restarting after the process is killed is limited the same way: `START_STICKY` restarts in the background can't start a mic service, so the service stops itself.
 - STU-72 (follow-up / barge-in) can use the same `EndOfSpeechDetector` hook.

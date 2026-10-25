@@ -21,7 +21,7 @@ const val VAD_CHUNK_MILLIS = VAD_CHUNK_SAMPLES * 1000 / 16_000
 
 const val SILERO_MODEL_FILE = "silero_vad.onnx"
 
-/** Silero VAD (ADR 0023), behind an interface so the streaming can be tested without ONNX. */
+/** Silero VAD (ADR 0024), behind an interface so the streaming can be tested without ONNX. */
 interface VadModel : AutoCloseable {
     /**
      * Speech probability, 0 to 1, of one chunk: [input] is [VAD_CONTEXT_SAMPLES] +

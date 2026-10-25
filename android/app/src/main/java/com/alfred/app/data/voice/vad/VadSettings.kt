@@ -9,7 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** End-of-speech tuning (Settings → Developer, ADR 0023). */
+/** End-of-speech tuning (Settings → Developer, ADR 0024). */
 data class VadSettings(
     /** Off: the energy endpointer instead, to compare. */
     val useSilero: Boolean = true,

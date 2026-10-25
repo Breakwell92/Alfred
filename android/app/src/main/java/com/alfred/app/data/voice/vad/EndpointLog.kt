@@ -21,7 +21,7 @@ enum class TurnMode(val wire: String) {
 /** One turn's end, as logged. */
 data class EndpointRecord(val atMillis: Long, val mode: TurnMode, val report: EndpointReport, val config: VadConfig)
 
-/** How each turn's end was decided, kept for tuning (ADR 0023). */
+/** How each turn's end was decided, kept for tuning (ADR 0024). */
 interface EndpointLog {
     /** The latest records, newest first, for the developer screen. */
     val recent: StateFlow<List<EndpointRecord>>

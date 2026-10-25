@@ -14,7 +14,7 @@ enum class Endpoint {
 
 /**
  * Decides when a turn being listened to has finished, from the mic frames being streamed. One
- * instance per turn. Silero VAD ([com.alfred.app.data.voice.vad.SileroEndOfSpeech], ADR 0023)
+ * instance per turn. Silero VAD ([com.alfred.app.data.voice.vad.SileroEndOfSpeech], ADR 0024)
  * in the app; [EnergyEndOfSpeech] when the model can't run.
  */
 fun interface EndOfSpeechDetector {
@@ -31,7 +31,7 @@ fun interface EndOfSpeechDetector {
 fun goQuiet(): EndOfSpeechDetector = EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE)
 
 /**
- * An energy endpointer, the fallback when Silero VAD can't load (ADR 0023). The noise floor is the
+ * An energy endpointer, the fallback when Silero VAD can't load (ADR 0024). The noise floor is the
  * quietest 20 ms frame of the last 3 s, so a steady fan or TV sets its own level; a frame is
  * speech when it's well above that (and above an absolute minimum).
  *

@@ -82,7 +82,7 @@ val appModule = module {
     single<AudioPlayer> { AudioTrackPlayer(androidContext()) }
     // Explicit so Koin doesn't try to inject the defaulted dispatcher and clock.
     single { VoiceController(get(), get(), get(), get(), get(), get(), get(named(APP_SCOPE))) }
-    // End of speech (ADR 0023): Silero VAD, loaded once in the background.
+    // End of speech (ADR 0024): Silero VAD, loaded once in the background.
     single<VadSettingsRepository> { DataStoreVadSettingsRepository(androidContext().settingsDataStore) }
     single<EndpointLog> { FileEndpointLog(File(androidContext().filesDir, "endpoint_events.jsonl")) }
     single {

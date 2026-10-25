@@ -86,6 +86,7 @@ Settings → Wake word turns on hands-free listening (it asks for the microphone
 - Say the wake word ("Hey Jarvis" by default; Alexa and Hey Mycroft are the other stock models), then your request. A beep (if Chime is on) and a light buzz mean Alfred heard you. The turn ends after about a second of silence.
 - Alfred keeps listening with the screen off and the app in the background, shown by an ongoing notification with **Pause** / **Resume**. Nothing leaves the phone until the wake word is heard: detection runs on the phone.
 - If it woke by mistake, tap **That wasn't me** on the notification (offered for 30 s). It stops the turn and logs a false accept. Settings shows the counts; the full log is `adb shell run-as com.alfred.app cat files/wake_events.jsonl`.
+- End of speech is Silero VAD ([ADR 0024](../docs/decisions/0024-end-of-speech-vad.md)): a turn ends after 0.7 s of quiet, and a wake turn where nobody speaks for 5 s is cancelled with a soft chime. Tap the **Settings** title 7 times for the developer section (thresholds, energy fallback switch, recent turns). Each turn's end is logged to `adb shell run-as com.alfred.app cat files/endpoint_events.jsonl` (`latency_ms` is how long after the last speech the turn ended) and logcat tag `Alfred/VAD`.
 - **Sensitivity**: higher wakes more easily, and more often by mistake.
 - It pauses during calls, while another app is recording, and (by default) while Do Not Disturb is on.
 - After a reboot, open the app once to start listening again (boot start comes with STU-71).

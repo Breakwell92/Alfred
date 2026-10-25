@@ -2,7 +2,7 @@ package com.alfred.app.data.voice.vad
 
 import com.alfred.app.data.voice.Endpoint
 
-/** How the VAD endpointer decides (ADR 0023). Tunable on the developer screen. */
+/** How the VAD endpointer decides (ADR 0024). Tunable on the developer screen. */
 data class VadConfig(
     /** A chunk is speech at this probability or above. */
     val threshold: Float = DEFAULT_THRESHOLD,
@@ -31,7 +31,7 @@ data class VadConfig(
     }
 }
 
-/** How a turn's end was decided, logged per turn (ADR 0023). Times are from the mic opening. */
+/** How a turn's end was decided, logged per turn (ADR 0024). Times are from the mic opening. */
 data class EndpointReport(
     val endpoint: Endpoint,
     /** Why: "silence", "max_length" or "no_speech". */

@@ -38,7 +38,7 @@ Each partial re-decodes everything heard so far. Over a 30 s cap at 0.4 s steps,
 `VoiceController` ends a listening turn in three ways:
 
 - **Stop**, or the close button, which cancels instead.
-- **Going quiet**: push-to-talk passes the wake word's `EnergyEndOfSpeech` ([ADR 0019](0019-wake-word.md), an energy threshold over an adaptive noise floor) to `startListening`. Once speech has started, 1 s of quiet sends the turn. For push-to-talk, its no-speech and max-length limits are off: silence before anyone speaks never ends a tapped turn, and the cap below applies. While the button that started a hold-to-talk turn is still down, silence never ends the turn: the release decides, so a pause to think doesn't cut the request in half. The detector keeps seeing every frame, so its noise floor stays current. It's a stopgap: Silero VAD (STU-69) replaces it.
+- **Going quiet**: push-to-talk passes the wake word's `EnergyEndOfSpeech` ([ADR 0019](0019-wake-word.md), an energy threshold over an adaptive noise floor) to `startListening`. Once speech has started, 1 s of quiet sends the turn. For push-to-talk, its no-speech and max-length limits are off: silence before anyone speaks never ends a tapped turn, and the cap below applies. While the button that started a hold-to-talk turn is still down, silence never ends the turn: the release decides, so a pause to think doesn't cut the request in half. The detector keeps seeing every frame, so its noise floor stays current. Since STU-69 the detector is Silero VAD with 700 ms of silence ([ADR 0023](0023-end-of-speech-vad.md)); the energy endpointer is its fallback.
 - **The max length**: `max_audio_s` minus 0.5 s, at most 60 s, or 30 s if the server didn't say.
 
 Cancel sends `turn.cancel` and never `turn.end`, so nothing reaches the router.
@@ -73,5 +73,5 @@ Roborazzi with Robolectric's native graphics renders Compose on the JVM, with no
 
 - The live transcript and dim tail are only as good as Whisper on partial audio: the last word or two often flip until more audio arrives. That's what the dimming is for.
 - Partials cost GPU time while a user speaks. If the 3090 is busy with the LLM, raise the interval or set it to 0.
-- `EnergyEndOfSpeech`'s thresholds were tuned for hands-free wake word turns. Dan should check that they suit push-to-talk on the real phone before STU-69 replaces the detector.
+- End-of-speech tuning for push-to-talk and wake word turns is on the hidden developer section of Settings (ADR 0024).
 - Screenshot goldens are recorded on Windows. If CI's Linux rendering differs slightly, re-record or add a tolerance.

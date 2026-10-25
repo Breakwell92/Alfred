@@ -47,7 +47,7 @@ fun DeveloperSection(viewModel: VadSettingsViewModel = koinViewModel()) {
     )
 }
 
-/** End-of-speech tuning (ADR 0023): shown once the Settings title has been tapped 7 times. */
+/** End-of-speech tuning (ADR 0024): shown once the Settings title has been tapped 7 times. */
 @Composable
 fun DeveloperContent(
     state: VadUiState,

@@ -24,7 +24,7 @@ data class VadUiState(
     val recent: List<EndpointRecord> = emptyList(),
 )
 
-/** Settings → Developer → End of speech (hidden; ADR 0023). */
+/** Settings → Developer → End of speech (hidden; ADR 0024). */
 class VadSettingsViewModel(
     private val repository: VadSettingsRepository,
     factory: EndOfSpeechFactory,

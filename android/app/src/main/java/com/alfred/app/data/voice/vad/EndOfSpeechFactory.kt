@@ -25,7 +25,7 @@ sealed interface VadEngineStatus {
 }
 
 /**
- * Builds each turn's [EndOfSpeechDetector] (ADR 0023). The Silero model is loaded once, off the
+ * Builds each turn's [EndOfSpeechDetector] (ADR 0024). The Silero model is loaded once, off the
  * main thread, as soon as the app starts; until it's ready, if it can't load, or with Silero
  * turned off on the developer screen, turns use [EnergyEndOfSpeech]. Silero turns are logged to
  * [log] (and logcat) when they end. Call it from the main thread.

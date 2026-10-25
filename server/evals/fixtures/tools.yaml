@@ -1,0 +1,68 @@
+# Canned tool results for mock mode (evals/mocks.py). Strings are formatted with the request's
+# `now` and `timezone` and the call's arguments; other values are sent as JSON.
+# Tool names for connectors that aren't built yet are placeholders: rename them (and the cases)
+# when the connector lands.
+
+# Echo / general agent (alfred_server/agents/echo.py). Same format as the real tool.
+get_time: "{now:%H:%M} on {now:%A} {now.day} {now:%B %Y} ({timezone})"
+
+# Weather (pending)
+get_weather:
+  location: Home
+  now: {summary: Light rain, temperature_c: 11, wind_mph: 14}
+  today: {high_c: 13, low_c: 7, rain_chance: 80}
+  tomorrow: {summary: Sunny intervals, high_c: 15, low_c: 6, rain_chance: 10}
+
+# Home Assistant (pending)
+light_turn_on: {ok: true}
+light_turn_off: {ok: true}
+light_set_brightness: {ok: true}
+heating_set_temperature: {ok: true}
+heating_get_status: {current_c: 18.5, target_c: 20, mode: heat, boost: false}
+home_get_state:
+  lights_on: [kitchen, living room]
+  heating: {current_c: 18.5, target_c: 20}
+  front_door: locked
+
+# Google Calendar (pending)
+calendar_list_events:
+  events:
+    - {title: Dentist, start: "2026-10-26T09:30:00+00:00", end: "2026-10-26T10:00:00+00:00"}
+    - {title: Team call, start: "2026-10-26T14:00:00+00:00", end: "2026-10-26T15:00:00+00:00"}
+calendar_create_event: {ok: true, id: evt_123}
+
+# Gmail (pending)
+email_search:
+  messages:
+    - {id: m1, from: Sam Patel, subject: Saturday plans, snippet: "Are we still on for 7?"}
+    - {id: m2, from: Electricity Co, subject: Your bill is ready, snippet: "£84.20 due 3 Nov"}
+email_read: {id: m1, from: Sam Patel, body: "Are we still on for 7 on Saturday? I can drive."}
+email_send: {status: pending_confirmation}
+
+# Contacts and messaging (pending)
+contacts_search:
+  contacts:
+    - {name: Sam Patel, phone: "+44 7700 900001"}
+    - {name: Sam Okafor, phone: "+44 7700 900002"}
+message_send: {status: pending_confirmation}
+
+# Music and Plex (pending)
+music_play: {ok: true, playing: "{query}"}
+music_pause: {ok: true}
+music_skip: {ok: true}
+plex_search:
+  results:
+    - {title: The Matrix, year: 1999, type: movie}
+plex_play: {ok: true}
+
+# Samsung TV (pending)
+tv_power: {ok: true}
+tv_set_input: {ok: true}
+tv_set_volume: {ok: true}
+
+# Scheduler and reminders (pending)
+reminder_create: {ok: true, id: rem_1}
+schedule_create: {ok: true, id: sch_1}
+reminder_list:
+  reminders:
+    - {text: Put the bins out, due: "2026-10-26T19:00:00+00:00"}

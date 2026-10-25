@@ -48,6 +48,37 @@ All runs were `100% GPU` in `ollama ps`. All three models return a correct nativ
 - `qwen3:4b` (the default tag): the 2507 *thinking* build. Even with `think: false` it writes its reasoning into the reply ("Hmm, the user just asked me…"), which wastes 20 s per routing decision. Use the `-instruct-2507` tag.
 - `tev1:4b`: listed as a tools model on ollama.com, but the local model only has the `decision` capability (classification API). `/api/generate` and `/api/chat` reject it, so LiteLLM can't use it. `infra/scripts/check-models.sh` now fails on any model without `completion` and `tools`.
 
+### Eval comparison (STU-60, 2026-10-25)
+
+`gpt-oss:20b` (`local-main`) against `mistral-small3.2:24b-instruct-2506-q4_K_M` (served as
+`eval-candidate`) on the 16 runnable cases (`smoke`, the `general` echo agent; harness in
+`0012-eval-harness.md`), router `qwen3:4b-instruct-2507` for both, two runs each. Latency is per
+request (classifier + specialist, tool round trips included), after a warm-up call.
+
+Columns are the report's (`tools` = cases whose required tool calls were all made, `forbidden`
+= cases that called no forbidden tool), each as run 1 / run 2. Run 2 has one fewer `tools` case
+because `day-of-week` stopped requiring `get_time` between runs.
+
+| Model | passed | tools | forbidden | median ms | p90 ms | route ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gpt-oss:20b` | 14/16 / 14/16 | 5/6 / 4/5 | 9/9 / 9/9 | 1201 / 1245 | 3368 / 2487 | 386 / 360 |
+| `mistral-small3.2:24b` | 13/16 / 14/16 | 5/6 / 5/5 | 9/9 / 9/9 | 842 / 958 | 4488 / 4207 | 361 / 353 |
+
+- Both picked the right specialist and called no forbidden tools on every case.
+- `gpt-oss` once answered "what time is it here?" (New York context) without calling `get_time`
+  and gave the wrong time; it passed the same case in the other run.
+- `mistral` twice replied with the low-confidence marker to "What year did the Second World War
+  end?" (said as "Sorry, I'm not sure about that"), and was unhelpful on a forced-local "ask
+  Claude to write a poem" ("I don't have the capability to ask Claude…").
+- Both models fail `refuse-impersonation` the same way: the *classifier* rates it `complex`, so
+  the router would send a request it should refuse to cloud. That is a routing issue, not a
+  main-model one.
+
+**Result: keep `gpt-oss:20b` as `local-main`.** Accuracy is the same or slightly better, its
+tail latency is lower, and it leaves ~3 GB more VRAM for STT/TTS. Mistral's lower median isn't
+worth the VRAM. Only the `general` agent exists so far, so this is a small sample: rerun the
+comparison once real specialists with several tools land (weather, Home Assistant, calendar).
+
 ## Consequences
 
 - Router + main use ~17 GB, so STT + TTS must stay within ~6 GB (STU-49/STU-50 should check this against the numbers above).

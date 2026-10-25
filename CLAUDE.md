@@ -33,6 +33,7 @@ Keep this section current whenever a ticket changes layout, commands or conventi
 | `server/alfred_server/connectors/` | Connector registry and token vault (`docs/connectors.md`, `docs/decisions/0010-connector-registry.md`): `models.py` `Connector`/`ToolMeta` (risk `read`/`write`/`irreversible`, privacy `cloud_ok`/`local_only`) and tool sources (Agno toolkit, MCP stdio, MCP streamable HTTP); `registry.py` (`tool_meta(name)`); `builtin/` built-in connectors (dummy `time`); `vault.py` Fernet with `ALFRED_VAULT_KEY`; `store.py` Postgres tables (ciphertext only); `oauth.py` OAuth2 + PKCE; `service.py` `get_connector_service()` → `load_tools(specialist)`, status, refresh; `refresher.py` background token refresh; `api.py` `GET /connectors`, `PUT /connectors/{id}`, `DELETE /connectors/{id}/auth`, `GET .../auth/start` (protected) and the open, state-guarded `GET .../auth/callback`. |
 | `server/tests/connector_helpers.py`, `tests/fixtures/mcp_server.py` | Test connectors, fake OAuth provider (`httpx.MockTransport`) and a tiny stdio MCP server. |
 | `server/tests/llm_fakes.py`, `router_fakes.py` | `FakeProxy`: mock LiteLLM proxy (canned and streamed completions and tool calls, `route_completion()` for the classifier) for running Agno agents in tests. `FakeBudget`: canned budget answers for router tests. |
+| `server/evals/` | Eval harness (`docs/decisions/0012-eval-harness.md`, `server/evals/README.md`): `cases/*.yaml` (~50 requests; `pending` = specialist/connector not built yet, skipped; `smoke` = the pre-merge set), `fixtures/tools.yaml` canned tool results, `cases.py` case schema, `mocks.py` tool hook that answers every tool call from fixtures (real tools never run), `runner.py` routes each case through the real router and scores specialist, required/forbidden tools, tier and reply, `report.py` markdown + JSON reports in `evals/reports/` (git-ignored), `run.py` CLI. |
 | `server/alfred_server/db.py` | `check_database()`; `python -m alfred_server.db` checks `ALFRED_DATABASE_URL` is reachable. |
 | `android/` | Android app `com.alfred.app` (Kotlin, Compose + Material 3, Koin, OkHttp, DataStore), Gradle KTS with a version catalog (`gradle/libs.versions.toml`). Unit tests in `app/src/test/`. See `android/README.md`. |
 | `infra/` | `docker-compose.yml` (Postgres + pgvector, GPU Ollama, LiteLLM gateway), `litellm/` (proxy config + `render_config.py`), `.env.example`, `scripts/` (`pull-models.sh`, `check-models.sh`), `certs/` (git-ignored local CAs). See `docs/infra.md`. |
@@ -58,6 +59,8 @@ uv run python scripts/download_tts_models.py       # Kokoro + Piper model files 
 uv run python scripts/tts_demo.py                  # sample WAV per voice into tts-samples/
 uv run python scripts/bench_tts.py                 # TTS time to first audio / VRAM
 uv run python scripts/bench_router.py              # router classifier latency (needs the gateway)
+uv run python -m evals.run --model-alias local-main --tag smoke   # smoke evals (needs the gateway)
+uv run python -m evals.run --model-alias local-main --model-alias eval-candidate   # compare models
 ```
 
 `tests/test_db.py` has a Postgres smoke test that only runs when `TEST_DATABASE_URL` is set (CI sets it with a Postgres service; locally point it at the compose stack).
@@ -212,6 +215,6 @@ Before finishing a ticket, update whichever of these your change affected. Never
 
 - Never commit secrets. API keys and tokens go in `.env` (git-ignored); document new variables in `infra/.env.example`.
 - Never paste real credentials into code, tests, fixtures, docs or tickets.
-- Run the smoke evals (`server/evals`, from STU-60 onwards) before merging changes to prompts, routing or model configuration.
+- Run the smoke evals (`cd server && uv run python -m evals.run --model-alias local-main --tag smoke`, see `server/evals/README.md`) before merging changes to prompts, routing or model configuration, and say the result in the PR. CI can't run them (they need the gateway and GPU).
 - Safety behaviour (confirmation tiers, privacy flags, kill switch) must not be weakened to make a feature work; raise it with Dan instead.
 - Prefer small, reviewable PRs. One ticket, one PR.

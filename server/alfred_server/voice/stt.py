@@ -180,7 +180,8 @@ class _PartialDecoder:
 
     A partial decode starts once `step_bytes` of new audio have arrived since the last one, if
     none is running and an STT slot is free: it never queues behind another turn's decode, so
-    partials can't slow anyone's final transcript by more than one short decode.
+    partials can't slow anyone's final transcript by more than one short decode. The slot is
+    checked again as the decode starts, since another turn may take it after `feed` schedules it.
     """
 
     def __init__(self, stt: FasterWhisperSTT, on_partial: PartialCallback, step_bytes: int):
@@ -199,8 +200,8 @@ class _PartialDecoder:
         if len(buffer) - self._decoded_bytes < self._step_bytes or self._stt._slots.locked():
             return
         size = len(buffer) - len(buffer) % 2  # a chunk may end mid-sample
-        self._decoded_bytes = size
-        self._task = asyncio.create_task(self._run(bytes(buffer[:size])))
+        previous, self._decoded_bytes = self._decoded_bytes, size
+        self._task = asyncio.create_task(self._run(bytes(buffer[:size]), previous))
 
     async def finish(self) -> None:
         """End of audio: let a running partial finish (it's sent before the final transcript)."""
@@ -217,7 +218,13 @@ class _PartialDecoder:
             _background.add(task)
             task.add_done_callback(_background.discard)
 
-    async def _run(self, pcm: bytes) -> None:
+    async def _run(self, pcm: bytes, previous_bytes: int) -> None:
+        # Another turn may have taken the last slot since `feed`. Checked right before acquiring
+        # (nothing awaits in between, and a free semaphore is taken without yielding), so a
+        # partial never waits in the queue; the next `feed` tries again.
+        if self._closed or self._stt._slots.locked():
+            self._decoded_bytes = previous_bytes
+            return
         try:
             async with self._stt._slots:
                 if self._closed:

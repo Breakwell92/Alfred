@@ -369,6 +369,30 @@ def test_partials_never_wait_for_another_turns_decode() -> None:
     assert len(model.calls) == 2
 
 
+def test_a_partial_skips_a_slot_taken_after_it_was_scheduled() -> None:
+    model = FakeModel()
+    stt = partial_stt(model)
+    partials: list[Partial] = []
+
+    async def collect(partial: Partial) -> None:
+        partials.append(partial)
+
+    async def run() -> int:
+        decoder = stt_module._PartialDecoder(stt, collect, step_bytes=CHUNK_100MS)
+        decoder.feed(bytearray(SECOND[:6400]))  # scheduled while the slot is free…
+        async with stt._slots:  # …but another turn's decode takes it before the task runs
+            await asyncio.sleep(0.05)
+        retried = decoder._decoded_bytes
+        await decoder.finish()
+        return retried
+
+    retried = asyncio.run(run())
+
+    assert model.calls == []
+    assert partials == []
+    assert retried == 0  # the next feed tries the same audio again
+
+
 def test_a_failed_turn_sends_no_more_partials() -> None:
     model = FakeModel(delay=0.1)
     partials: list[Partial] = []

@@ -78,6 +78,26 @@ class VoiceViewModelTest {
     }
 
     @Test
+    fun `going quiet doesn't end a turn while the button is held`() = runTest(mainDispatcher.dispatcher) {
+        val (vm, voice) = viewModel()
+        vm.onTalkPressed()
+
+        // "Set a timer for…", a 1.5 s pause to think, "…ten minutes", all while holding.
+        repeat(50) { capture.frames.trySend(square(30)) }
+        repeat(25) { capture.frames.trySend(square(8_000)) }
+        repeat(75) { capture.frames.trySend(square(30)) }
+        assertEquals(VoicePhase.Listening, phaseOf(voice))
+        repeat(25) { capture.frames.trySend(square(8_000)) }
+        assertEquals(VoicePhase.Listening, phaseOf(voice))
+        assertTrue(connection.sent.none { it is ClientMessage.TurnEnd })
+
+        vm.onTalkReleased(heldMillis = 4_000)
+
+        assertEquals(VoicePhase.Thinking, phaseOf(voice))
+        assertTrue(connection.sent.last() is ClientMessage.TurnEnd)
+    }
+
+    @Test
     fun `a tap starts and a second tap sends`() = runTest(mainDispatcher.dispatcher) {
         val (vm, voice) = viewModel()
 

@@ -20,7 +20,8 @@ data class VoiceUiState(val voice: VoiceState = VoiceState(), val link: LinkStat
  * Push-to-talk on Home. The talk button works both ways: hold it and let go to send (hold to
  * talk), or tap once to start and tap again to send (toggle). Tapping while Alfred is thinking
  * or speaking stops him. A turn also sends itself once the speaker goes quiet ([endOfSpeech],
- * the Recording screen's "or go quiet", ADR 0021).
+ * the Recording screen's "or go quiet", ADR 0021), but never while the button is still held:
+ * then letting go decides, so a pause to think doesn't cut the request in half.
  */
 class VoiceViewModel(
     private val voice: VoiceController,
@@ -37,10 +38,19 @@ class VoiceViewModel(
     /** Whether the press now down started the turn (so a long hold's release sends it). */
     private var pressStartedTurn = false
 
+    /** The button that started the turn is still down: silence mustn't end it. */
+    private var held = false
+
     fun onTalkPressed() {
         pressStartedTurn = false
         when (voice.state.value.phase) {
-            VoicePhase.Idle -> pressStartedTurn = voice.startListening(endOfSpeech())
+            VoicePhase.Idle -> {
+                val detector = endOfSpeech()
+                held = true
+                // The inner detector still sees every frame, so its noise floor stays current.
+                pressStartedTurn = voice.startListening { frame -> detector.onFrame(frame) && !held }
+                if (!pressStartedTurn) held = false
+            }
             VoicePhase.Listening -> voice.stopListening()
             VoicePhase.Thinking, VoicePhase.Speaking -> voice.cancel()
         }
@@ -54,6 +64,7 @@ class VoiceViewModel(
             voice.stopListening()
         }
         pressStartedTurn = false
+        held = false
     }
 
     fun answer(approve: Boolean) = voice.answer(approve)

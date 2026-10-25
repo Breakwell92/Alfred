@@ -23,7 +23,7 @@ Push-to-talk (STU-65, [ADR 0017](0017-android-voice-client.md)) streamed audio a
 faster-whisper doesn't stream, so `FasterWhisperSTT` **re-decodes the buffered audio** every `ALFRED_STT_PARTIAL_INTERVAL_S` of new audio (default 0.4 s; `0` turns it off). It sends `transcript.partial {turn_id, stable, unstable}` before `transcript.final`. Some rules keep this from slowing anyone's real transcript:
 
 - At most one partial decode runs per turn.
-- A partial starts only when an STT slot is free, so it never queues behind another turn's decode.
+- A partial starts only when an STT slot is free, so it never queues behind another turn's decode. The slot is checked again right before acquiring, since another turn may take it after the partial is scheduled.
 - At end of audio, a partial that's still running finishes and is sent (it holds the GPU slot anyway). The final decode then runs as before. The final transcript is therefore delayed by at most the rest of one partial decode.
 - A turn that fails or is cancelled sends no more partials. A decode already running is left to finish, so the slot is released cleanly.
 
@@ -38,7 +38,7 @@ Each partial re-decodes everything heard so far. Over a 30 s cap at 0.4 s steps,
 `VoiceController` ends a listening turn in three ways:
 
 - **Stop**, or the close button, which cancels instead.
-- **Going quiet**: push-to-talk passes the wake word's `EnergyEndOfSpeech` ([ADR 0019](0019-wake-word.md), an energy threshold over an adaptive noise floor) to `startListening`. Once speech has started, 1 s of quiet sends the turn. For push-to-talk, its no-speech and max-length limits are off: silence before anyone speaks never ends a tapped turn, and the cap below applies. In hold-to-talk, a pause of over a second while still holding sends too. It's a stopgap: Silero VAD (STU-69) replaces it.
+- **Going quiet**: push-to-talk passes the wake word's `EnergyEndOfSpeech` ([ADR 0019](0019-wake-word.md), an energy threshold over an adaptive noise floor) to `startListening`. Once speech has started, 1 s of quiet sends the turn. For push-to-talk, its no-speech and max-length limits are off: silence before anyone speaks never ends a tapped turn, and the cap below applies. While the button that started a hold-to-talk turn is still down, silence never ends the turn: the release decides, so a pause to think doesn't cut the request in half. The detector keeps seeing every frame, so its noise floor stays current. It's a stopgap: Silero VAD (STU-69) replaces it.
 - **The max length**: `max_audio_s` minus 0.5 s, at most 60 s, or 30 s if the server didn't say.
 
 Cancel sends `turn.cancel` and never `turn.end`, so nothing reaches the router.

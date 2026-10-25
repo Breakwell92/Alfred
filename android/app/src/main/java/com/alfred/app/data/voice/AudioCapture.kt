@@ -10,6 +10,7 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.NoiseSuppressor
 import androidx.core.content.ContextCompat
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +32,11 @@ fun interface AudioCapture {
 
 class AudioRecordCapture(private val context: Context) : AudioCapture {
 
+    private val sessions = ConcurrentHashMap.newKeySet<Int>()
+
+    /** Audio session ids of our own open recordings, so other apps' can be told apart. */
+    val activeSessionIds: Set<Int> get() = sessions
+
     override fun frames(): Flow<ByteArray> = flow {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -48,7 +54,9 @@ class AudioRecordCapture(private val context: Context) : AudioCapture {
             record.release()
             throw IllegalStateException("Couldn't open the microphone")
         }
-        val effects = attachEffects(record.audioSessionId)
+        val sessionId = record.audioSessionId
+        sessions += sessionId
+        val effects = attachEffects(sessionId)
         try {
             record.startRecording()
             val buffer = ByteArray(FRAME_BYTES)
@@ -65,6 +73,7 @@ class AudioRecordCapture(private val context: Context) : AudioCapture {
             effects.forEach(AudioEffect::release)
             if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) record.stop()
             record.release()
+            sessions -= sessionId
         }
     }.flowOn(Dispatchers.IO)
 

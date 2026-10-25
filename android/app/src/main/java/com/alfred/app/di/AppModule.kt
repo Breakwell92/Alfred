@@ -16,11 +16,24 @@ import com.alfred.app.data.voice.AudioTrackPlayer
 import com.alfred.app.data.voice.DataStoreDeviceIdRepository
 import com.alfred.app.data.voice.DeviceConnection
 import com.alfred.app.data.voice.DeviceIdRepository
+import com.alfred.app.data.voice.LinkHolds
 import com.alfred.app.data.voice.OkHttpDeviceConnection
 import com.alfred.app.data.voice.VoiceController
+import com.alfred.app.data.wakeword.AndroidWakeFeedback
+import com.alfred.app.data.wakeword.AndroidWakeSignals
+import com.alfred.app.data.wakeword.DataStoreWakeWordSettingsRepository
+import com.alfred.app.data.wakeword.FileWakeEventLog
+import com.alfred.app.data.wakeword.OnnxWakeWordModels
+import com.alfred.app.data.wakeword.WakeEventLog
+import com.alfred.app.data.wakeword.WakeFeedback
+import com.alfred.app.data.wakeword.WakeSignals
+import com.alfred.app.data.wakeword.WakeWordController
+import com.alfred.app.data.wakeword.WakeWordSettingsRepository
 import com.alfred.app.ui.home.HomeViewModel
 import com.alfred.app.ui.home.VoiceViewModel
 import com.alfred.app.ui.settings.SettingsViewModel
+import com.alfred.app.ui.settings.WakeWordSettingsViewModel
+import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,9 +65,34 @@ val appModule = module {
         OkHttpDeviceConnection(get(), get(), get(), BuildConfig.VERSION_NAME, get(named(APP_SCOPE)))
     }
     single<AudioCapture> { AudioRecordCapture(androidContext()) }
+    single { LinkHolds(get()) }
     single<AudioPlayer> { AudioTrackPlayer(androidContext()) }
     // Explicit so Koin doesn't try to inject the defaulted dispatcher and clock.
     single { VoiceController(get(), get(), get(), get(), get(), get(), get(named(APP_SCOPE))) }
+    // Wake word (ADR 0019).
+    single<WakeWordSettingsRepository> { DataStoreWakeWordSettingsRepository(androidContext().settingsDataStore) }
+    single<WakeSignals> {
+        val capture = get<AudioCapture>()
+        AndroidWakeSignals(androidContext()) { (capture as? AudioRecordCapture)?.activeSessionIds.orEmpty() }
+    }
+    single<WakeFeedback> { AndroidWakeFeedback(androidContext()) }
+    single<WakeEventLog> { FileWakeEventLog(File(androidContext().filesDir, "wake_events.jsonl")) }
+    single {
+        WakeWordController(
+            settingsRepository = get(),
+            voice = get(),
+            capture = get(),
+            signals = get(),
+            feedback = get(),
+            events = get(),
+            loadModels = { model ->
+                val assets = androidContext().assets
+                OnnxWakeWordModels({ name -> assets.open("wakeword/$name").use { it.readBytes() } }, model.modelFile)
+            },
+            scope = get(named(APP_SCOPE)),
+        )
+    }
+    viewModel { WakeWordSettingsViewModel(get(), get(), get()) }
     viewModel { VoiceViewModel(get(), get()) }
     // Explicit so Koin doesn't try to inject HomeViewModel's poll interval (a defaulted Long).
     viewModel { HomeViewModel(get(), get()) }

@@ -17,6 +17,12 @@ android {
         versionName = "0.1.0"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"$defaultServerUrl\"")
+
+        // ONNX Runtime (wake word) ships ~35 MB of native code per ABI: keep 64-bit ARM phones
+        // and the x86_64 emulator only (ADR 0019).
+        ndk {
+            abiFilters += setOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -60,6 +66,8 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
+    // openWakeWord models (ADR 0019).
+    implementation(libs.onnxruntime.android)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 
@@ -68,4 +76,6 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     // A real org.json for JVM tests (android.jar's is a stub that throws).
     testImplementation(libs.json)
+    // Desktop ONNX Runtime, so JVM tests can run the real wake word models.
+    testImplementation(libs.onnxruntime.jvm)
 }

@@ -33,12 +33,14 @@ class ShapesTest {
     }
 
     @Test
-    fun `octagon is regular on a square`() {
-        val side = 100f
-        val cut = OctagonShape.cuts(Size(side, side)).distinct().single()
-        val straight = side - 2 * cut
-        val diagonal = Offset(cut, cut).getDistance()
-        assertEquals(straight, diagonal, 0.01f)
+    fun `octagon is regular on a square of any size`() {
+        // 100 px once hid a px-for-percent mix-up, so check sizes where they differ.
+        listOf(48f, 176f, 385f).forEach { side ->
+            val cut = OctagonShape.cuts(Size(side, side)).distinct().single()
+            val straight = side - 2 * cut
+            val diagonal = Offset(cut, cut).getDistance()
+            assertEquals("side $side", straight, diagonal, 0.01f)
+        }
     }
 
     @Test

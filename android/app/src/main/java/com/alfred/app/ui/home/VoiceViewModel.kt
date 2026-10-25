@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alfred.app.data.voice.DeviceConnection
 import com.alfred.app.data.voice.EndOfSpeechDetector
-import com.alfred.app.data.voice.Endpoint
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.VoiceController
 import com.alfred.app.data.voice.VoicePhase
@@ -27,8 +26,11 @@ data class VoiceUiState(val voice: VoiceState = VoiceState(), val link: LinkStat
 class VoiceViewModel(
     private val voice: VoiceController,
     private val connection: DeviceConnection,
-    /** End of speech with no no-speech or length limit ([com.alfred.app.data.voice.vad.EndOfSpeechFactory.pushToTalk]). */
-    private val endOfSpeech: () -> EndOfSpeechDetector = ::goQuiet,
+    /**
+     * End of speech with no no-speech or length limit that never ends while its `held` says the
+     * button is down ([com.alfred.app.data.voice.vad.EndOfSpeechFactory.pushToTalk]).
+     */
+    private val endOfSpeech: (held: () -> Boolean) -> EndOfSpeechDetector = ::goQuiet,
 ) : ViewModel() {
 
     val state: StateFlow<VoiceUiState> = combine(voice.state, connection.state, ::VoiceUiState)
@@ -47,13 +49,10 @@ class VoiceViewModel(
         pressStartedTurn = false
         when (voice.state.value.phase) {
             VoicePhase.Idle -> {
-                val detector = endOfSpeech()
                 held = true
-                // The inner detector still sees every frame, so its noise floor stays current.
-                pressStartedTurn = voice.startListening({ frame ->
-                    val endpoint = detector.onFrame(frame)
-                    if (held) Endpoint.Continue else endpoint
-                })
+                // The detector sees every frame while held (its noise floor and speech tracking stay
+                // current) but doesn't end, or log an end, until the button is up.
+                pressStartedTurn = voice.startListening(endOfSpeech { held })
                 if (!pressStartedTurn) held = false
             }
             VoicePhase.Listening -> voice.stopListening()

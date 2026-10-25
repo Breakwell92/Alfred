@@ -78,6 +78,23 @@ class SileroEndOfSpeechTest {
     }
 
     @Test
+    fun `a pause while held reports nothing, going quiet after the release reports once`() {
+        val reports = mutableListOf<EndpointReport>()
+        var held = true
+        val eos = SileroEndOfSpeech(VadStream(FakeVadModel()), VadConfig(), reports::add, held = { held })
+
+        val whileHeld = (frames(1_000, 8_000) + frames(1_500, 20) + frames(500, 8_000)).map(eos::onFrame)
+        assertTrue(whileHeld.all { it == Endpoint.Continue })
+        assertTrue(reports.isEmpty())
+
+        held = false
+        val afterRelease = frames(1_000, 20).map(eos::onFrame)
+        assertEquals(Endpoint.End, afterRelease.last())
+        assertEquals(1, reports.size)
+        assertEquals("silence", reports[0].reason)
+    }
+
+    @Test
     fun `gives up when nobody speaks`() {
         val eos = SileroEndOfSpeech(VadStream(FakeVadModel()), VadConfig(noSpeechMillis = 2_000))
         val results = frames(2_100, 20).map(eos::onFrame)

@@ -75,6 +75,7 @@ class FileEndpointLog(
             return JSONObject()
                 .put("at", record.atMillis)
                 .put("mode", record.mode.wire)
+                .put("engine", report.engine.wire)
                 .put("endpoint", report.endpoint.name)
                 .put("reason", report.reason)
                 .put("total_ms", report.totalMillis)
@@ -107,6 +108,7 @@ class FileEndpointLog(
                     lastSpeechMillis = json.optIntOrNull("last_speech_ms"),
                     latencyMillis = json.optIntOrNull("latency_ms"),
                     meanInferenceMicros = json.optLong("inference_us"),
+                    engine = VadEngine.entries.firstOrNull { it.wire == json.optString("engine") } ?: VadEngine.Silero,
                 ),
                 config = VadConfig(
                     threshold = config.getDouble("threshold").toFloat(),

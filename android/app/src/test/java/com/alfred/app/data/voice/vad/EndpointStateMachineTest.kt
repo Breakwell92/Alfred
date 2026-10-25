@@ -101,6 +101,21 @@ class EndpointStateMachineTest {
     }
 
     @Test
+    fun `while held it never ends, and the quiet counts again from the release`() {
+        machine.feed(640, 0.9f)
+        // A long pause with the button still down.
+        repeat(2_000 / VAD_CHUNK_MILLIS) {
+            assertEquals(Endpoint.Continue, machine.onChunk(0.02f, VAD_CHUNK_MILLIS, held = true))
+        }
+        assertNull(machine.report)
+        // Let go: 700 ms of quiet from here ends it, reported against the real last speech.
+        assertNull(machine.feed(640, 0.02f))
+        assertEquals(Endpoint.End, machine.feed(96, 0.02f))
+        val report = checkNotNull(machine.report)
+        assertTrue(checkNotNull(report.latencyMillis) > 2_000)
+    }
+
+    @Test
     fun `push-to-talk limits off never give up`() {
         val ptt = EndpointStateMachine(VadConfig(noSpeechMillis = Int.MAX_VALUE, maxUtteranceMillis = Int.MAX_VALUE))
         assertNull(ptt.feed(60_000, 0.01f))

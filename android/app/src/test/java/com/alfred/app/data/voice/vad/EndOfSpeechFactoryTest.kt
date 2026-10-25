@@ -55,7 +55,8 @@ class EndOfSpeechFactoryTest {
         assertEquals(TurnMode.HandsFree, record.mode)
         assertEquals(42L, record.atMillis)
         assertEquals("silence", record.report.reason)
-        assertTrue(logcat.single().startsWith("hands_free turn: silence"))
+        assertEquals(VadEngine.Silero, record.report.engine)
+        assertTrue(logcat.single().startsWith("hands_free turn (silero): silence"))
     }
 
     @Test
@@ -76,9 +77,30 @@ class EndOfSpeechFactoryTest {
     }
 
     @Test
-    fun `energy when silero is turned off`() = runFactoryTest {
+    fun `energy when silero is turned off, and its turns are logged too`() = runFactoryTest {
         settings.update { it.copy(useSilero = false) }
-        assertTrue(factory().handsFree() is EnergyEndOfSpeech)
+        val eos = factory().handsFree()
+        assertTrue(eos is EnergyEndOfSpeech)
+
+        val results = (List(20) { frame(10) } + List(40) { frame(8_000) } + List(60) { frame(10) }).map(eos::onFrame)
+
+        assertEquals(Endpoint.End, results.last())
+        val record = checkNotNull(log.recent.latest)
+        assertEquals(VadEngine.Energy, record.report.engine)
+        assertEquals("silence", record.report.reason)
+        assertTrue(checkNotNull(record.report.latencyMillis) >= 1_000)
+    }
+
+    @Test
+    fun `push-to-talk held never ends or logs`() = runFactoryTest {
+        var held = true
+        val eos = factory().pushToTalk { held }
+        val whileHeld = (List(40) { frame(8_000) } + List(100) { frame(10) }).map(eos::onFrame)
+        assertTrue(whileHeld.all { it == Endpoint.Continue })
+        assertTrue(log.recent.value.isEmpty())
+        held = false
+        assertEquals(Endpoint.End, List(40) { frame(10) }.map(eos::onFrame).last())
+        assertEquals(TurnMode.PushToTalk, log.recent.latest?.mode)
     }
 
     @Test

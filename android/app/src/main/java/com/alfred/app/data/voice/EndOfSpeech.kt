@@ -1,5 +1,8 @@
 package com.alfred.app.data.voice
 
+import com.alfred.app.data.voice.vad.EndpointReport
+import com.alfred.app.data.voice.vad.VadEngine
+
 /** What an [EndOfSpeechDetector] makes of the turn so far. */
 enum class Endpoint {
     /** Keep listening. */
@@ -28,7 +31,8 @@ fun interface EndOfSpeechDetector {
  * before anyone speaks, and [VoiceController] caps the length. The app uses
  * [com.alfred.app.data.voice.vad.EndOfSpeechFactory.pushToTalk].
  */
-fun goQuiet(): EndOfSpeechDetector = EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE)
+fun goQuiet(held: () -> Boolean = { false }): EndOfSpeechDetector =
+    EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE, held = held)
 
 /**
  * An energy endpointer, the fallback when Silero VAD can't load (ADR 0024). The noise floor is the
@@ -39,6 +43,8 @@ fun goQuiet(): EndOfSpeechDetector = EnergyEndOfSpeech(noSpeechMillis = Int.MAX_
  * the recorder's start-up land. Speech has "started" only after [minSpeechMillis] of it, so a
  * click or a cough doesn't start the silence countdown. The turn ends after [silenceMillis] of
  * quiet once speech has started, after [noSpeechMillis] if it never does, or at [maxMillis].
+ * While [held] is true it never ends and the quiet countdown starts again. [onReport] is called
+ * once, when it ends.
  */
 class EnergyEndOfSpeech(
     private val silenceMillis: Int = 1_000,
@@ -48,12 +54,16 @@ class EnergyEndOfSpeech(
     private val speechOverNoise: Double = 3.0,
     private val ignoreStartMillis: Int = 300,
     private val minSpeechMillis: Int = 200,
+    private val held: () -> Boolean = { false },
+    private val onReport: (EndpointReport) -> Unit = {},
 ) : EndOfSpeechDetector {
     private val recent = DoubleArray(FLOOR_WINDOW_FRAMES)
     private var frames = 0
     private var elapsedMillis = 0
     private var quietMillis = 0
     private var speechMillis = 0
+    private var speechStartMillis: Int? = null
+    private var lastSpeechMillis: Int? = null
     private var result = Endpoint.Continue
 
     private val heardSpeech get() = speechMillis >= minSpeechMillis
@@ -73,15 +83,42 @@ class EnergyEndOfSpeech(
         if (speech) {
             speechMillis += millis
             quietMillis = 0
+            if (heardSpeech && speechStartMillis == null) speechStartMillis = elapsedMillis - speechMillis
+            if (heardSpeech) lastSpeechMillis = elapsedMillis
         } else {
             quietMillis += millis
+        }
+        if (held()) {
+            quietMillis = 0
+            return result
         }
         result = when {
             heardSpeech && (quietMillis >= silenceMillis || elapsedMillis >= maxMillis) -> Endpoint.End
             !heardSpeech && elapsedMillis >= minOf(noSpeechMillis, maxMillis) -> Endpoint.NoSpeech
             else -> Endpoint.Continue
         }
+        if (result != Endpoint.Continue) report()
         return result
+    }
+
+    private fun report() {
+        val last = lastSpeechMillis
+        val reason = when {
+            result == Endpoint.NoSpeech -> "no_speech"
+            quietMillis >= silenceMillis -> "silence"
+            else -> "max_length"
+        }
+        onReport(
+            EndpointReport(
+                endpoint = result,
+                reason = reason,
+                totalMillis = elapsedMillis,
+                speechStartMillis = speechStartMillis,
+                lastSpeechMillis = last,
+                latencyMillis = last?.let { elapsedMillis - it },
+                engine = VadEngine.Energy,
+            ),
+        )
     }
 
     private companion object {

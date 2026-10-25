@@ -31,6 +31,12 @@ data class VadConfig(
     }
 }
 
+/** Which endpointer decided. */
+enum class VadEngine(val wire: String) {
+    Silero("silero"),
+    Energy("energy"),
+}
+
 /** How a turn's end was decided, logged per turn (ADR 0024). Times are from the mic opening. */
 data class EndpointReport(
     val endpoint: Endpoint,
@@ -43,15 +49,18 @@ data class EndpointReport(
     val lastSpeechMillis: Int?,
     /** From the last speech to the decision: how long after the speaker stopped the turn ended. */
     val latencyMillis: Int?,
-    /** Mean time per model call, microseconds (0 for synthetic scores). */
+    /** Mean time per model call, microseconds (0 for synthetic scores and the energy endpointer). */
     val meanInferenceMicros: Long = 0,
+    val engine: VadEngine = VadEngine.Silero,
 )
 
 /**
  * The turn as a state machine over VAD probabilities: Listening → (speech for
  * [VadConfig.minSpeechMillis]) Speaking → (quiet for [VadConfig.endSilenceMillis]) end. No
  * speech by [VadConfig.noSpeechMillis] gives [Endpoint.NoSpeech]; [VadConfig.maxUtteranceMillis]
- * ends it either way. Pure, so it's tested with synthetic scores.
+ * ends it either way. While [onChunk]'s `held` is true (a hold-to-talk button is down) it keeps
+ * tracking speech but never ends, and the quiet countdown starts again from the release. Pure,
+ * so it's tested with synthetic scores.
  */
 class EndpointStateMachine(private val config: VadConfig) {
 
@@ -69,8 +78,14 @@ class EndpointStateMachine(private val config: VadConfig) {
     private var speechStart: Int? = null
     private var lastSpeech: Int? = null
 
-    /** One chunk of [millis] with speech [probability]; the result sticks once it isn't Continue. */
-    fun onChunk(probability: Float, millis: Int): Endpoint {
+    /** Quiet counts from here: the last speech, or the release of a held button if that's later. */
+    private var quietFrom: Int? = null
+
+    /**
+     * One chunk of [millis] with speech [probability]; the result sticks once it isn't Continue.
+     * [held]: the turn mustn't end on its own now (the button that started it is still down).
+     */
+    fun onChunk(probability: Float, millis: Int, held: Boolean = false): Endpoint {
         report?.let { return it.endpoint }
         elapsed += millis
         when (state) {
@@ -85,16 +100,27 @@ class EndpointStateMachine(private val config: VadConfig) {
             State.Speaking -> if (probability >= config.quietThreshold) lastSpeech = elapsed
             State.Ended -> Unit
         }
-        val last = lastSpeech
+        if (held) {
+            quietFrom = elapsed
+            return Endpoint.Continue
+        }
+        // Speech starts Speaking and sets lastSpeech, so no lastSpeech means still Listening.
+        val last = lastSpeech ?: return listeningResult()
+        val quietSince = maxOf(last, quietFrom ?: last)
         return when {
-            state == State.Speaking && last != null && elapsed - last >= config.endSilenceMillis ->
-                end(Endpoint.End, "silence")
-            elapsed >= config.maxUtteranceMillis && state == State.Speaking -> end(Endpoint.End, "max_length")
-            state == State.Listening && elapsed >= minOf(config.noSpeechMillis, config.maxUtteranceMillis) ->
-                end(Endpoint.NoSpeech, "no_speech")
+            elapsed - quietSince >= config.endSilenceMillis -> end(Endpoint.End, "silence")
+            elapsed >= config.maxUtteranceMillis -> end(Endpoint.End, "max_length")
             else -> Endpoint.Continue
         }
     }
+
+    /** Before speech has started: give up at the no-speech limit (or the cap, if that's sooner). */
+    private fun listeningResult(): Endpoint =
+        if (elapsed >= minOf(config.noSpeechMillis, config.maxUtteranceMillis)) {
+            end(Endpoint.NoSpeech, "no_speech")
+        } else {
+            Endpoint.Continue
+        }
 
     private fun end(endpoint: Endpoint, reason: String): Endpoint {
         state = State.Ended

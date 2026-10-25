@@ -27,8 +27,8 @@ sealed interface VadEngineStatus {
 /**
  * Builds each turn's [EndOfSpeechDetector] (ADR 0024). The Silero model is loaded once, off the
  * main thread, as soon as the app starts; until it's ready, if it can't load, or with Silero
- * turned off on the developer screen, turns use [EnergyEndOfSpeech]. Silero turns are logged to
- * [log] (and logcat) when they end. Call it from the main thread.
+ * turned off on the developer screen, turns use [EnergyEndOfSpeech]. Every turn that ends itself
+ * is logged to [log] (and logcat), with the engine that decided. Call it from the main thread.
  */
 class EndOfSpeechFactory(
     settingsRepository: VadSettingsRepository,
@@ -68,27 +68,38 @@ class EndOfSpeechFactory(
     fun handsFree(): EndOfSpeechDetector = detector(TurnMode.HandsFree, settings.value.config)
 
     /**
-     * For push-to-talk's "or go quiet": silence after speech sends the turn. Nothing ends it before
-     * anyone speaks (the button is waiting), and [com.alfred.app.data.voice.VoiceController] caps the length.
+     * For push-to-talk's "or go quiet" (and CUT IN): silence after speech sends the turn. Nothing
+     * ends it before anyone speaks (the button is waiting), and
+     * [com.alfred.app.data.voice.VoiceController] caps the length. While [held] is true (the
+     * hold-to-talk button is still down) it never ends: the release decides, and nothing is logged
+     * for an end that didn't happen.
      */
-    fun pushToTalk(): EndOfSpeechDetector = detector(
+    fun pushToTalk(held: () -> Boolean = { false }): EndOfSpeechDetector = detector(
         TurnMode.PushToTalk,
         settings.value.config.copy(noSpeechMillis = Int.MAX_VALUE, maxUtteranceMillis = Int.MAX_VALUE),
+        held,
     )
 
-    private fun detector(mode: TurnMode, config: VadConfig): EndOfSpeechDetector {
-        val model = model
-        if (model == null || !settings.value.useSilero) {
-            return EnergyEndOfSpeech(noSpeechMillis = config.noSpeechMillis, maxMillis = config.maxUtteranceMillis)
-        }
-        return SileroEndOfSpeech(VadStream(model), config, onReport = { report ->
+    private fun detector(mode: TurnMode, config: VadConfig, held: () -> Boolean = { false }): EndOfSpeechDetector {
+        val onReport = { report: EndpointReport ->
             logcat(
-                "${mode.wire} turn: ${report.reason} after ${report.totalMillis} ms, " +
+                "${mode.wire} turn (${report.engine.wire}): ${report.reason} after ${report.totalMillis} ms, " +
                     "${report.latencyMillis ?: "-"} ms after the last speech, ${report.meanInferenceMicros} µs/chunk",
             )
             val record = EndpointRecord(clock(), mode, report, config)
             scope.launch { log.record(record) }
-        })
+            Unit
+        }
+        val model = model
+        if (model == null || !settings.value.useSilero) {
+            return EnergyEndOfSpeech(
+                noSpeechMillis = config.noSpeechMillis,
+                maxMillis = config.maxUtteranceMillis,
+                held = held,
+                onReport = onReport,
+            )
+        }
+        return SileroEndOfSpeech(VadStream(model), config, onReport = onReport, held = held)
     }
 
     private fun failed(message: String) {

@@ -34,7 +34,7 @@ A wake word turn has no button to release, so the phone has to hear when the spe
 
 **No speech is a quiet cancel.** On `NoSpeech`, `VoiceController` cancels the turn: `turn.cancel`, never `turn.end`. Nothing is transcribed, no error is shown, and the `onNoSpeech` callback runs. The wake word loop uses it to play a soft chime (`WakeFeedback.onNoSpeech`: `TONE_PROP_NACK` at about half the wake chime's volume, only when the chime is on), then goes back to listening. Before this, a silent wake turn sent silence to the server and showed "Didn't catch that".
 
-**Push-to-talk** (and CUT IN on the Transmitting screen, [ADR 0023](0023-transmitting-screen.md)) uses the same Silero detector with the no-speech and length limits off. The button is waiting, and `VoiceController` caps the length from `hello.ok`. ADR 0021's rule still holds: while the button that started a hold-to-talk turn is down, silence never ends the turn.
+**Push-to-talk** (and CUT IN on the Transmitting screen, [ADR 0023](0023-transmitting-screen.md)) uses the same Silero detector with the no-speech and length limits off. The button is waiting, and `VoiceController` caps the length from `hello.ok`. ADR 0021's rule still holds: while the button that started a hold-to-talk turn is down, silence never ends the turn. The hold is part of the detector (`pushToTalk(held)`; `EndpointStateMachine.onChunk(…, held)`): while held it keeps tracking speech but neither ends nor reports, and the quiet countdown starts again from the release. So the log never shows an end that didn't happen.
 
 **Fallback.** `EndOfSpeechFactory` (a Koin single) loads the model on `Dispatchers.Default` when it's first built. That happens when Home or the wake word service first needs it. Until the model is ready, or if it can't load, a turn uses `EnergyEndOfSpeech` with the same no-speech and length limits. "Can't load" covers a missing asset and ONNX Runtime not built for the ABI (`LinkageError`). The developer screen also has a switch to use the energy endpointer, for comparison. `EnergyEndOfSpeech` now returns `NoSpeech` too.
 
@@ -48,7 +48,7 @@ A wake word turn has no button to release, so the phone has to hear when the spe
   - "Reset to defaults";
   - the last 10 turns.
 - The settings are `VadSettings` in the app's DataStore under `vad_*` keys, each clamped to the slider's range.
-- Every turn Silero ends is logged to logcat (`Alfred/VAD`) and appended to `files/endpoint_events.jsonl`. Each record has the mode, reason, total ms, speech start, last speech, `latency_ms` (from the last speech chunk to the decision), µs per chunk and the settings used.
+- Every turn the detector ends itself is logged, Silero or energy fallback (`engine` says which), to logcat (`Alfred/VAD`) and appended to `files/endpoint_events.jsonl`. Each record has the mode, reason, total ms, speech start, last speech, `latency_ms` (from the last speech chunk to the decision), µs per chunk and the settings used.
 - Read the log with `adb shell run-as com.alfred.app cat files/endpoint_events.jsonl`.
 
 The developer controls live on the Settings screen itself rather than as a separate destination. The drawer lists every `Destination`, so a separate screen would have needed special-casing to stay hidden.
@@ -68,6 +68,7 @@ JVM tests with the real model (`OnnxSileroVadTest`, desktop ONNX Runtime; it run
 
 | Measurement | How | Result |
 | --- | --- | --- |
+| Silero is the engine in use | Settings title ×7: the developer section says "Silero VAD" (and log records say `"engine": "silero"`) | pending |
 | Natural pauses don't end the turn | Wake word, then "turn on the… lounge lights" with a real hesitation, 10 tries | pending |
 | End of speech within ~0.8 s | `latency_ms` in `endpoint_events.jsonl` over those turns (it should sit near 700–770) | pending |
 | Silent wake turn | Say the wake word and nothing else: soft chime after 5 s, no error, listening again | pending |

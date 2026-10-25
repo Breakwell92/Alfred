@@ -125,7 +125,10 @@ val appModule = module {
     viewModel { VoiceViewModel(get(), get(), get<EndOfSpeechFactory>()::pushToTalk) }
     viewModel { RecordingViewModel(get()) }
     // Explicit so Koin doesn't try to inject the defaulted detector factory and hold time.
-    viewModel { TransmittingViewModel(get(), get<EndOfSpeechFactory>()::pushToTalk) }
+    viewModel {
+        val factory = get<EndOfSpeechFactory>()
+        TransmittingViewModel(get(), { factory.pushToTalk() })
+    }
     // Explicit so Koin doesn't try to inject HomeViewModel's poll interval (a defaulted Long).
     viewModel { HomeViewModel(get(), get(), get()) }
     // Explicit so Koin doesn't try to inject the Keystore dispatcher (a defaulted parameter).

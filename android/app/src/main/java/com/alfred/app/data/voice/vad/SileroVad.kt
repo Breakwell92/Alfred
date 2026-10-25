@@ -106,12 +106,14 @@ class VadStream(private val model: VadModel) {
 
 /**
  * Ends a turn from Silero VAD's scores ([EndpointStateMachine]). Calls [onReport] once, when the
- * turn ends, with how it was decided.
+ * turn ends, with how it was decided. While [held] is true (the hold-to-talk button is down) it
+ * never ends, so nothing is reported for an end that doesn't happen.
  */
 class SileroEndOfSpeech(
     private val stream: VadStream,
     config: VadConfig,
     private val onReport: (EndpointReport) -> Unit = {},
+    private val held: () -> Boolean = { false },
     private val nanoClock: () -> Long = System::nanoTime,
 ) : EndOfSpeechDetector {
     private val machine = EndpointStateMachine(config)
@@ -126,7 +128,7 @@ class SileroEndOfSpeech(
             val now = nanoClock()
             inferenceNanos += now - started
             chunks++
-            if (result == Endpoint.Continue) result = machine.onChunk(probability, VAD_CHUNK_MILLIS)
+            if (result == Endpoint.Continue) result = machine.onChunk(probability, VAD_CHUNK_MILLIS, held())
             started = now
         }
         if (result != Endpoint.Continue) {

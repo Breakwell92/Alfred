@@ -40,6 +40,7 @@ class FileEndpointLogTest {
         assertEquals(listOf("silence", "no_speech"), lines.map { it.getString("reason") })
         assertEquals(736, lines[0].getInt("latency_ms"))
         assertEquals("hands_free", lines[0].getString("mode"))
+        assertEquals("silero", lines[0].getString("engine"))
         assertTrue(lines[1].isNull("latency_ms"))
         assertEquals(700, lines[0].getJSONObject("config").getInt("end_silence_ms"))
     }

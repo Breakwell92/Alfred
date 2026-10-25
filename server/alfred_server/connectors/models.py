@@ -35,6 +35,15 @@ class ToolMeta(BaseModel):
     # e.g. "Send an email to {to}: '{subject}'". Unset (or a missing argument) falls back to
     # the tool name and its arguments. See docs/decisions/0013-confirmation-gating.md.
     confirm_summary: str | None = None
+    # The confirmation tier when Dan hasn't overridden it, if lower than `risk`: e.g. media
+    # controls are honestly `write` but run without asking. Never higher than `risk` (the
+    # registry checks). See docs/decisions/0013-confirmation-gating.md.
+    default_tier: Risk | None = None
+
+    @property
+    def tier(self) -> Risk:
+        """The tool's confirmation tier before any override of Dan's."""
+        return self.default_tier or self.risk
 
 
 @dataclass(frozen=True)

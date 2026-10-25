@@ -851,6 +851,7 @@ def test_an_approved_action_finishes_when_its_turn_is_cancelled(
             h._model,
             h.budget,
             h.confirmations,
+            h._tools,
             h.stt,
             h.tts,
             h.tts.default_voice,
@@ -891,3 +892,14 @@ def test_confirmation_ids_fit_the_default_turn_id() -> None:
         parse_message(
             json.dumps({"type": "confirm.reply", "confirmation_id": "a" * 57, "approve": True})
         )
+
+
+def test_a_voice_turn_gets_the_specialists_connector_tools(harness: VoiceHarness) -> None:
+    harness.hear("Play some jazz.")
+    harness.reply_with(route_completion(agent="media"), streamed_completion("Playing jazz."))
+    with harness.connect() as ws:
+        hello(ws)
+        turn = speak(ws)
+    assert turn.first("turn.metadata")["specialist"] == "media"
+    tools = [t["function"]["name"] for t in harness.proxy.body(1)["tools"]]
+    assert any(name.startswith("spotify_") for name in tools), tools

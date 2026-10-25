@@ -375,3 +375,22 @@ def test_cli_parses_several_aliases() -> None:
 
     assert args.model_alias == ["local-main", "eval-candidate"]
     assert args.tag == [] and not args.allow_cloud
+
+
+def test_score_tool_args_contain() -> None:
+    c = case(
+        expected_tools=[
+            {"name": "play", "args_subset": {"query": "x"}, "args_contain": {"device": "Kitchen"}}
+        ]
+    )
+    good = result(
+        tool_calls=[ToolCall("play", {"query": "x", "device": "the kitchen speaker"}, True)]
+    )
+    dropped = result(tool_calls=[ToolCall("play", {"query": "x"}, True)])
+
+    score(c, good)
+    score(c, dropped)
+
+    assert good.passed
+    assert not dropped.passed
+    assert dropped.failures == ["missing call play({'query': 'x', 'device': '*Kitchen*'})"]

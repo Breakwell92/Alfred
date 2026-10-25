@@ -30,6 +30,8 @@ from agno.run.agent import (
     RunPausedEvent,
 )
 from agno.run.base import RunStatus
+from agno.tools import Toolkit
+from agno.tools.mcp import MCPTools
 from pydantic import BaseModel, Field
 
 from alfred_server.agents.base import LOW_CONFIDENCE_MARKER
@@ -136,6 +138,12 @@ class ModelFactory(Protocol):
     """Builds the model for `alias` tagged with `metadata`; `kwargs` go to the model."""
 
     def __call__(self, alias: ModelAlias, metadata: CallMetadata, **kwargs: Any) -> Model: ...
+
+
+class ToolLoader(Protocol):
+    """Connector tools for a specialist (`ConnectorService.load_tools`), loaded per request."""
+
+    async def __call__(self, specialist: str) -> Sequence[Toolkit | MCPTools]: ...
 
 
 class BudgetGate(Protocol):
@@ -345,6 +353,7 @@ class Router:
         model_factory: ModelFactory,
         db: BaseDb | AsyncBaseDb,
         gate: ConfirmationGate | None = None,
+        tools: ToolLoader | None = None,
     ) -> None:
         self.registry = registry
         self.budget = budget
@@ -353,6 +362,9 @@ class Router:
         # Without a gate (some tests) tools are still gated by their declared risk, but a run
         # that pauses can't be recorded, so it fails.
         self.gate = gate
+        # Loads the tools of specialists with `uses_connectors`. Without one (tests) they
+        # run with only their own tools.
+        self.tools = tools
 
     # --- Classification --------------------------------------------------------------------
 
@@ -494,12 +506,28 @@ class Router:
             return ToolPolicy(default_registry())
         return await asyncio.to_thread(self.gate.policy)
 
-    def _agent(
+    async def _connector_tools(self, specialist: Specialist) -> list[Toolkit | MCPTools]:
+        """The specialist's connector tools. A loading failure leaves it without them (it says
+        the service isn't connected) rather than failing the request."""
+        if not specialist.uses_connectors or self.tools is None:
+            return []
+        try:
+            return list(await self.tools(specialist.name))
+        except Exception:
+            logger.exception("couldn't load connector tools for %s", specialist.name)
+            return []
+
+    async def _agent(
         self, route: Route, choice: ModelChoice, ctx: RequestContext, policy: ToolPolicy
     ) -> Agent:
         metadata = CallMetadata(agent=route.specialist.name, trigger=ctx.device_type)
         model = self.model_factory(choice.alias, metadata)
-        return gate_agent(route.specialist.factory(ctx, model, self.db), policy)
+        agent = route.specialist.factory(ctx, model, self.db)
+        extra = await self._connector_tools(route.specialist)
+        if extra:
+            own = agent.tools if isinstance(agent.tools, list) else []
+            agent.tools = [*own, *extra]
+        return gate_agent(agent, policy)
 
     async def _paused(
         self,
@@ -558,7 +586,7 @@ class Router:
         """Run the request to completion. Raises `AgentRunError` if the run fails."""
         choice = route.choice
         policy = await self._policy()
-        agent = self._agent(route, choice, ctx, policy)
+        agent = await self._agent(route, choice, ctx, policy)
         run = await agent.arun(
             text, session_id=ctx.session_id, metadata=self._run_metadata(route, choice)
         )
@@ -570,7 +598,7 @@ class Router:
                 logger.info("retrying on %s (%s)", fallback.alias, fallback.reason)
                 await self._forget_run(run.run_id)
                 route = Route(route.classification, route.specialist, fallback)
-                agent = self._agent(route, fallback, ctx, policy)
+                agent = await self._agent(route, fallback, ctx, policy)
                 run = await agent.arun(
                     text, session_id=ctx.session_id, metadata=self._run_metadata(route, fallback)
                 )
@@ -693,7 +721,7 @@ class Router:
                 )
         route = Route(Classification(specialist=specialist.name), specialist, choice)
         policy = await self._policy()
-        agent = self._agent(route, choice, ctx, policy)
+        agent = await self._agent(route, choice, ctx, policy)
         stored = await agent.aget_run_output(
             confirmation.run_id, session_id=confirmation.session_id
         )
@@ -732,7 +760,7 @@ class _StreamAttempt:
     async def run(
         self, router: Router, route: Route, choice: ModelChoice, text: str, ctx: RequestContext
     ) -> AsyncIterator[Token]:
-        self.agent = agent = router._agent(route, choice, ctx, self.policy)
+        self.agent = agent = await router._agent(route, choice, ctx, self.policy)
         self.session_id = ctx.session_id
         try:
             async for event in agent.arun(

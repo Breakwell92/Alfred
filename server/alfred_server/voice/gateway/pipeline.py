@@ -3,7 +3,7 @@
 Reply text is spoken as it streams: tokens go to the TTS, which starts on the first sentence
 (or clause) while the model is still writing. A turn ends with `turn.metadata` and then
 `reply.audio.end`, or with one `error`. See docs/protocol.md and
-docs/decisions/0014-voice-gateway.md.
+docs/decisions/0015-voice-gateway.md.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from alfred_server.agents.router import (
     Route,
     Router,
     Token,
+    ToolLoader,
 )
 from alfred_server.agents.storage import StorageUnavailableError, check_agent_db
 from alfred_server.chat import Answered, ChatBudget, answer_pending, turn_info
@@ -58,6 +59,7 @@ class VoiceServices:
     model_factory: ModelFactory
     budget: ChatBudget
     confirmations: ConfirmationService
+    tools: ToolLoader
     stt: SpeechToText | None
     tts: TextToSpeech | None
     voice: VoiceConfig | None
@@ -69,7 +71,14 @@ class VoiceServices:
 
     def router(self) -> Router:
         """A router for one turn, like `chat.router_dependency`."""
-        return Router(get_registry(), self.budget, self.model_factory, self.db, self.confirmations)
+        return Router(
+            get_registry(),
+            self.budget,
+            self.model_factory,
+            self.db,
+            self.confirmations,
+            self.tools,
+        )
 
 
 class Sender(Protocol):
@@ -241,7 +250,7 @@ class VoiceTurn:
             return Answered(denied_reply(c))
         tier = await asyncio.to_thread(confirmations.current_tier, c)
         # `irreversible` needs the app's confirmation screen (`POST /confirmations/{id}` with
-        # channel `app_ui`), never the voice connection (ADR 0013, 0014).
+        # channel `app_ui`), never the voice connection (ADR 0013, 0015).
         if not can_approve(tier, "voice"):
             return Answered(APP_ONLY_REPLY, confirmation=c)
         if not await asyncio.to_thread(confirmations.resolve, c, "approved"):

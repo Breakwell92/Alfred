@@ -37,12 +37,17 @@ Tier = Literal["local", "cloud"]
 
 
 class ExpectedTool(BaseModel):
-    """A tool the request must call, with arguments that must include `args_subset`."""
+    """A tool the request must call, with arguments that must include `args_subset`.
+
+    `args_contain` maps an argument to text its value must contain (ignoring case), for
+    arguments the model may phrase several ways ("kitchen", "the kitchen speaker").
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     args_subset: dict[str, Any] = Field(default_factory=dict)
+    args_contain: dict[str, str] = Field(default_factory=dict)
 
 
 class EvalCase(BaseModel):

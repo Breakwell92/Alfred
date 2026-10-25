@@ -51,7 +51,7 @@ class ConfirmationResult(BaseModel):
 
 
 class PermissionChange(BaseModel):
-    # None removes the override, back to the connector's declared risk.
+    # None removes the override, back to the connector's default (`ToolPermission.default`).
     risk: Tier | None
 
 
@@ -59,6 +59,8 @@ class ToolPermission(BaseModel):
     connector_id: str
     tool: str
     declared: Tier
+    # The tier without an override: `declared`, or lower if the connector says so.
+    default: Tier
     override: Tier | None
     effective: Tier
 
@@ -144,8 +146,9 @@ def _permissions(service: ConfirmationService) -> list[ToolPermission]:
             connector_id=connector.id,
             tool=meta.name,
             declared=meta.risk,
+            default=meta.tier,
             override=overrides.get((connector.id, meta.name)),
-            effective=overrides.get((connector.id, meta.name), meta.risk),
+            effective=overrides.get((connector.id, meta.name), meta.tier),
         )
         for connector in service.registry.all()
         for meta in connector.tools
@@ -166,7 +169,7 @@ async def put_permission(
     connector_id: str, tool: str, body: PermissionChange, service: Service
 ) -> ToolPermission:
     """Relax or tighten one tool (`{"risk": "read" | "write" | "irreversible"}`), or reset it
-    to its declared risk (`{"risk": null}`). Applies from the next request."""
+    to its default (`{"risk": null}`). Applies from the next request."""
     connector = service.registry.get(connector_id)
     meta = next((t for t in connector.tools if t.name == tool), None) if connector else None
     if connector is None or meta is None:
@@ -179,6 +182,7 @@ async def put_permission(
         connector_id=connector_id,
         tool=tool,
         declared=meta.risk,
+        default=meta.tier,
         override=body.risk,
-        effective=body.risk or meta.risk,
+        effective=body.risk or meta.tier,
     )

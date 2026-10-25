@@ -667,4 +667,5 @@ def test_registry_unknown_name_gives_general() -> None:
 
 
 def test_default_registry_has_general() -> None:
-    assert get_registry().names() == [GENERAL]
+    assert get_registry().names() == [GENERAL, "media"]
+    assert get_registry().get("media").uses_connectors

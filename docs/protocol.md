@@ -1,6 +1,6 @@
 # Device ↔ server protocol (WebSocket, version 1)
 
-The phone (and later room satellites) keeps one WebSocket open to the server, over Tailscale. It carries voice turns (audio up, transcript and speech down), confirmations, and later device tools and pushes. Server code: `server/alfred_server/voice/gateway/` (`protocol.py` has the message models). Design and measurements: [ADR 0014](decisions/0014-voice-gateway.md). A reference client: `server/scripts/ws_client.py`.
+The phone (and later room satellites) keeps one WebSocket open to the server, over Tailscale. It carries voice turns (audio up, transcript and speech down), confirmations, and later device tools and pushes. Server code: `server/alfred_server/voice/gateway/` (`protocol.py` has the message models). Design and measurements: [ADR 0015](decisions/0015-voice-gateway.md). A reference client: `server/scripts/ws_client.py`.
 
 ## Connection
 

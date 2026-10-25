@@ -40,6 +40,7 @@ from alfred_server.agents.router import (
     RoutedReply,
     Router,
     Token,
+    ToolLoader,
 )
 from alfred_server.agents.storage import StorageUnavailableError, check_agent_db, get_agent_db
 from alfred_server.budget.models import CostEstimate
@@ -56,6 +57,7 @@ from alfred_server.confirmations.service import (
     get_confirmation_service,
     parse_yes_no,
 )
+from alfred_server.connectors.service import get_connector_service
 from alfred_server.models.gateway import (
     CallMetadata,
     GatewayNotConfiguredError,
@@ -135,13 +137,19 @@ def confirmation_service_dependency() -> ConfirmationService:
     return get_confirmation_service()
 
 
+def tool_loader_dependency() -> ToolLoader:
+    """Connector tools for specialists that use them (Spotify for media). Overridden in tests."""
+    return get_connector_service().load_tools
+
+
 def router_dependency(
     db: Annotated[AsyncBaseDb, Depends(ready_agent_db)],
     model_factory: Annotated[ModelFactory, Depends(model_factory_dependency)],
     budget: Annotated[ChatBudget, Depends(budget_dependency)],
     confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
+    tools: Annotated[ToolLoader, Depends(tool_loader_dependency)],
 ) -> Router:
-    return Router(get_registry(), budget, model_factory, db, confirmations)
+    return Router(get_registry(), budget, model_factory, db, confirmations, tools)
 
 
 @dataclass(frozen=True)

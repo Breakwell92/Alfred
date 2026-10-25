@@ -1,4 +1,4 @@
-# 0014: Voice WebSocket gateway
+# 0015: Voice WebSocket gateway
 
 - **Status:** accepted
 - **Date:** 2026-10-25

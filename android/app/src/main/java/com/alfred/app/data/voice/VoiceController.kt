@@ -52,6 +52,11 @@ data class PendingConfirmation(
 
 data class VoiceState(
     val phase: VoicePhase = VoicePhase.Idle,
+    /** When the mic opened for this turn (epoch millis), for the REC timer; null when not listening. */
+    val listeningSinceMillis: Long? = null,
+    /** The live transcript while speaking: confirmed words, then the still-provisional tail. */
+    val partialStable: String = "",
+    val partialUnstable: String = "",
     val transcript: String = "",
     val reply: String = "",
     val metadata: TurnMetadata? = null,
@@ -60,10 +65,28 @@ data class VoiceState(
     val error: String? = null,
 )
 
+/** The quietest reading 16-bit PCM can hold; digital silence reads as this. */
+const val MIN_DBFS = -96f
+
+/** The mic as the Recording screen shows it, updated for every captured frame. */
+data class MicMeter(
+    val dbfs: Float = MIN_DBFS,
+    /** [dbfs] as 0–1 ([dbfsToLevel]), the same as the orb's [VoiceController.level]. */
+    val level: Float = 0f,
+    val sampleRate: Int = INPUT_SAMPLE_RATE,
+    /** The phone's noise suppressor is on for this recording. */
+    val noiseFilter: Boolean = false,
+    /** Frames measured this turn: tells a new frame from an equal reading, and how many were missed. */
+    val frames: Long = 0,
+)
+
 /**
  * Runs voice turns over the [DeviceConnection] (docs/protocol.md, "A turn"): mic audio up,
  * transcript, reply text and reply audio down. One turn at a time. Shared by push-to-talk and,
  * later, the wake-word service. Call it from the main thread; [scope] should be main-bound.
+ *
+ * A turn being listened to ends on [stopListening], when its [EndOfSpeechDetector] says so, or
+ * at the longest utterance the server takes, whichever comes first.
  */
 class VoiceController(
     private val connection: DeviceConnection,
@@ -98,12 +121,18 @@ class VoiceController(
         }
     }.stateIn(scope, SharingStarted.Eagerly, 0f)
 
+    private val _meter = MutableStateFlow(MicMeter())
+
+    /** Kept apart from [state] so 50 readings a second only redraw what shows them. */
+    val meter: StateFlow<MicMeter> = _meter.asStateFlow()
+
     /** The turn whose messages and audio we take; anything for another turn is dropped. */
     private var turnId: String? = null
 
     /** The server has sent the current turn's last message. */
     private var serverDone = true
     private var captureJob: Job? = null
+    private var maxLengthJob: Job? = null
     private var expiryJob: Job? = null
 
     /** A `confirm.reply` held back until the turn that asked has ended (else it's `busy`). */
@@ -152,12 +181,14 @@ class VoiceController(
         deferredFor = null
         expiryJob?.cancel()
         // A new turn answers (or replaces) any pending confirmation on the server's side.
-        _state.value = VoiceState(phase = VoicePhase.Listening)
+        _state.value = VoiceState(phase = VoicePhase.Listening, listeningSinceMillis = clock())
+        _meter.value = MicMeter()
         captureJob = scope.launch {
             try {
                 capture.frames().collect { frame ->
-                    micLevel.value = pcm16Level(frame)
+                    // Audio goes out first; the meter is extra.
                     connection.sendAudio(frame)
+                    measure(frame)
                     if (endOfSpeech?.onFrame(frame) == true && turnId == id) stopListening()
                 }
             } catch (e: CancellationException) {
@@ -168,22 +199,53 @@ class VoiceController(
                 micLevel.value = 0f
             }
         }
+        maxLengthJob = scope.launch {
+            delay(maxTurnMillis(link))
+            if (turnId == id) stopListening()
+        }
         return true
     }
 
     /** End of speech: the server transcribes and answers. */
     fun stopListening() {
         if (_state.value.phase != VoicePhase.Listening) return
+        stopCapture()
+        turnId?.let { connection.send(ClientMessage.TurnEnd(it)) }
+        _state.update { it.copy(phase = VoicePhase.Thinking, listeningSinceMillis = null) }
+    }
+
+    /** Updates [meter] and the orb's mic [level] with [frame]. */
+    private fun measure(frame: ByteArray) {
+        val dbfs = rmsToDbfs(pcm16Rms(frame)).coerceAtLeast(MIN_DBFS)
+        val level = dbfsToLevel(dbfs)
+        micLevel.value = level
+        _meter.update {
+            MicMeter(
+                dbfs = dbfs,
+                level = level,
+                noiseFilter = CaptureEffect.NoiseSuppression in capture.activeEffects,
+                frames = it.frames + 1,
+            )
+        }
+    }
+
+    /** The server's limit (a little under it, so the cut is ours), at most [MAX_TURN_MILLIS]. */
+    private fun maxTurnMillis(link: LinkState.Connected): Long {
+        val serverMillis = link.maxAudioSeconds?.let { (it * 1000).toLong() - MAX_TURN_MARGIN_MILLIS }
+        return (serverMillis ?: DEFAULT_MAX_TURN_MILLIS).coerceIn(MIN_TURN_MILLIS, MAX_TURN_MILLIS)
+    }
+
+    private fun stopCapture() {
         captureJob?.cancel()
         captureJob = null
-        turnId?.let { connection.send(ClientMessage.TurnEnd(it)) }
-        _state.update { it.copy(phase = VoicePhase.Thinking) }
+        maxLengthJob?.cancel()
+        maxLengthJob = null
     }
 
     /** Stops whatever is happening: listening, thinking or speaking. Text stays on screen. */
     fun cancel() {
         abandonTurn()
-        _state.update { it.copy(phase = VoicePhase.Idle) }
+        _state.update { it.copy(phase = VoicePhase.Idle, listeningSinceMillis = null) }
         sendDeferredReply()
     }
 
@@ -321,8 +383,11 @@ class VoiceController(
     private fun onMessage(message: ServerMessage) {
         when (message) {
             is ServerMessage.ConfirmRequest -> showConfirmation(message)
+            is ServerMessage.TranscriptPartial -> ifCurrent(message.turnId) {
+                _state.update { it.copy(partialStable = message.stable, partialUnstable = message.unstable) }
+            }
             is ServerMessage.TranscriptFinal -> ifCurrent(message.turnId) {
-                _state.update { it.copy(transcript = message.text) }
+                _state.update { it.copy(transcript = message.text, partialStable = "", partialUnstable = "") }
             }
             is ServerMessage.ReplyTextDelta -> ifCurrent(message.turnId) {
                 _state.update { it.copy(reply = it.reply + message.text) }
@@ -358,13 +423,12 @@ class VoiceController(
             error.turnId == null -> _state.update { it.copy(error = text) }
             error.turnId == turnId -> {
                 serverDone = true
-                captureJob?.cancel()
-                captureJob = null
+                stopCapture()
                 // Audio that already arrived (e.g. before `tts_failed`) still plays out.
                 player.finish()
                 _state.update {
                     val phase = if (it.phase == VoicePhase.Speaking) it.phase else VoicePhase.Idle
-                    it.copy(phase = phase, error = text)
+                    it.copy(phase = phase, listeningSinceMillis = null, error = text)
                 }
                 sendDeferredReply()
             }
@@ -391,8 +455,7 @@ class VoiceController(
 
     /** Drops the current turn: mic off, playback stopped, server told if it's still running. */
     private fun abandonTurn() {
-        captureJob?.cancel()
-        captureJob = null
+        stopCapture()
         if (player.playing.value) player.stop()
         val id = turnId
         if (id != null && !serverDone) connection.send(ClientMessage.TurnCancel(id))
@@ -404,13 +467,12 @@ class VoiceController(
         if (cancelOnServer) {
             abandonTurn()
         } else {
-            captureJob?.cancel()
-            captureJob = null
+            stopCapture()
             player.stop()
             turnId = null
             serverDone = true
         }
-        _state.update { it.copy(phase = VoicePhase.Idle, error = message) }
+        _state.update { it.copy(phase = VoicePhase.Idle, listeningSinceMillis = null, error = message) }
     }
 
     private fun micError(e: Exception): String = when (e) {
@@ -431,5 +493,15 @@ class VoiceController(
         OffsetDateTime.parse(text).toInstant().toEpochMilli()
     } catch (e: DateTimeParseException) {
         null
+    }
+
+    companion object {
+        /** Without a limit from the server (`hello.ok` `max_audio_s`); the server's default. */
+        const val DEFAULT_MAX_TURN_MILLIS = 30_000L
+
+        /** The longest a turn may run, whatever the server allows. */
+        const val MAX_TURN_MILLIS = 60_000L
+        private const val MIN_TURN_MILLIS = 1_000L
+        private const val MAX_TURN_MARGIN_MILLIS = 500L
     }
 }

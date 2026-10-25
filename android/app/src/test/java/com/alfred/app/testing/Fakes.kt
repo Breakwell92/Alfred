@@ -8,6 +8,7 @@ import com.alfred.app.data.server.PairingResult
 import com.alfred.app.data.server.ServerClient
 import com.alfred.app.data.voice.AudioCapture
 import com.alfred.app.data.voice.AudioPlayer
+import com.alfred.app.data.voice.CaptureEffect
 import com.alfred.app.data.voice.ClientMessage
 import com.alfred.app.data.voice.DeviceConnection
 import com.alfred.app.data.voice.DeviceEvent
@@ -176,6 +177,7 @@ class FakeDeviceConnection(
 /** A microphone that emits whatever the test sends into [frames], or fails with [error]. */
 class FakeAudioCapture : AudioCapture {
     val frames = Channel<ByteArray>(Channel.UNLIMITED)
+    override var activeEffects: Set<CaptureEffect> = emptySet()
     var error: Exception? = null
     var open = false
 

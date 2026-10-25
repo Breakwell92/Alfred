@@ -3,6 +3,8 @@ package com.alfred.app.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alfred.app.data.voice.DeviceConnection
+import com.alfred.app.data.voice.EndOfSpeechDetector
+import com.alfred.app.data.voice.EnergyEndOfSpeech
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.VoiceController
 import com.alfred.app.data.voice.VoicePhase
@@ -17,11 +19,13 @@ data class VoiceUiState(val voice: VoiceState = VoiceState(), val link: LinkStat
 /**
  * Push-to-talk on Home. The talk button works both ways: hold it and let go to send (hold to
  * talk), or tap once to start and tap again to send (toggle). Tapping while Alfred is thinking
- * or speaking stops him.
+ * or speaking stops him. A turn also sends itself once the speaker goes quiet ([endOfSpeech],
+ * the Recording screen's "or go quiet", ADR 0021).
  */
 class VoiceViewModel(
     private val voice: VoiceController,
     connection: DeviceConnection,
+    private val endOfSpeech: () -> EndOfSpeechDetector = ::goQuiet,
 ) : ViewModel() {
 
     val state: StateFlow<VoiceUiState> = combine(voice.state, connection.state, ::VoiceUiState)
@@ -36,7 +40,7 @@ class VoiceViewModel(
     fun onTalkPressed() {
         pressStartedTurn = false
         when (voice.state.value.phase) {
-            VoicePhase.Idle -> pressStartedTurn = voice.startListening()
+            VoicePhase.Idle -> pressStartedTurn = voice.startListening(endOfSpeech())
             VoicePhase.Listening -> voice.stopListening()
             VoicePhase.Thinking, VoicePhase.Speaking -> voice.cancel()
         }
@@ -62,3 +66,10 @@ class VoiceViewModel(
         private const val STOP_TIMEOUT_MILLIS = 5_000L
     }
 }
+
+/**
+ * Silence after speech ends a push-to-talk turn; nothing does before anyone speaks (the button
+ * is waiting), and [VoiceController] caps the length.
+ */
+private fun goQuiet(): EndOfSpeechDetector =
+    EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE)

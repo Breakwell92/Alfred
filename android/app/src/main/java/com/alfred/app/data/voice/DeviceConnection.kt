@@ -40,8 +40,15 @@ sealed interface LinkState {
 
     data object Connecting : LinkState
 
-    /** `hello.ok` received. [voice] is false when the server has STT or TTS off. */
-    data class Connected(val sessionId: String, val voice: Boolean) : LinkState
+    /**
+     * `hello.ok` received. [voice] is false when the server has STT or TTS off.
+     * [maxAudioSeconds] is the longest utterance the server takes, if it said.
+     */
+    data class Connected(
+        val sessionId: String,
+        val voice: Boolean,
+        val maxAudioSeconds: Double? = null,
+    ) : LinkState
 
     /** The connection dropped or couldn't be made; retrying after [retryInMillis]. */
     data class Waiting(val reason: String, val retryInMillis: Long) : LinkState
@@ -269,7 +276,7 @@ class OkHttpDeviceConnection(
                             connected = true
                             helloTimer.cancel()
                             socket = ws
-                            _state.value = LinkState.Connected(message.sessionId, message.voice)
+                            _state.value = LinkState.Connected(message.sessionId, message.voice, message.maxAudioSeconds)
                             pinger = launch { ping(ws) }
                         }
                         _events.emit(DeviceEvent.Message(message))

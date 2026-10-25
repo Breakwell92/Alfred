@@ -10,7 +10,7 @@ private each tool is. Code is in `server/alfred_server/connectors/`; the design 
 | Piece | Where | What |
 | --- | --- | --- |
 | `Connector` | `connectors/models.py` | Definition: `id`, `name`, `auth_type`, `scopes`, `tool_source`, `tools` (`ToolMeta`), `specialist`, `oauth`. |
-| `ToolMeta` | `connectors/models.py` | Per tool: `risk` (`read` / `write` / `irreversible`), `privacy` (`cloud_ok` / `local_only`) and, for gated tools, `confirm_summary`. Undeclared tools never load. |
+| `ToolMeta` | `connectors/models.py` | Per tool: `risk` (`read` / `write` / `irreversible`), `privacy` (`cloud_ok` / `local_only`), for gated tools a `confirm_summary`, and optionally `default_tier` (a lower confirmation tier, e.g. media controls). Undeclared tools never load. |
 | Tool sources | `connectors/models.py` | `AgnoToolkitSource(factory)`, `McpStdioSource(command, args, env)`, `McpHttpSource(url, headers)`. Factories get decrypted `Credentials`. |
 | `ConnectorRegistry` | `connectors/registry.py` | All definitions; `for_specialist()`, `tool_meta(tool_name)`. |
 | `ConnectorService` | `connectors/service.py` | Status, credentials, OAuth, refresh and `load_tools(specialist)`. Get it with `get_connector_service()`. |
@@ -22,15 +22,24 @@ can't be read, e.g. `ALFRED_VAULT_KEY` unset or changed).
 
 ## Using connectors in an agent
 
-```python
-from alfred_server.connectors.service import get_connector_service
+Register the specialist with `uses_connectors=True` and the router loads its connectors' tools
+(every connector whose `specialist` is its name) on each request, adds them to the agent the
+factory built and gates them ([ADR 0014](decisions/0014-spotify-media.md)):
 
-tools = await get_connector_service().load_tools("home")   # Toolkits and MCPTools
-agent = build_agent("home", ctx=ctx, alias=alias, db=db, tools=tools, ...)
+```python
+registry.register(Specialist("media", "music: …", _media_factory, uses_connectors=True))
+```
+
+The factory builds the agent with only its own tools (if any). Behind it is:
+
+```python
+tools = await get_connector_service().load_tools("media")   # Toolkits and MCPTools
 ```
 
 `load_tools` returns only enabled, connected connectors' tools, refreshes an expiring token
-first, and skips (and logs) a connector whose tools fail to build. Look up a tool's risk or
+first, and skips (and logs) a connector whose tools fail to build. If loading fails altogether
+the agent runs without them, so its instructions should say what to tell Dan when it has no
+tools (e.g. "Spotify isn't connected yet"). Look up a tool's risk or
 privacy with `get_connector_service().tool_meta("tool_name")`.
 
 ## Risk and confirmations
@@ -39,6 +48,11 @@ The router gates every agent's tools by risk ([ADR 0013](decisions/0013-confirma
 `read` tools run straight away, `write` tools pause the run until Dan says yes (by text, voice or
 in the app), and `irreversible` tools until he approves them in the app. Dan can override a
 tool's risk with `PUT /settings/permissions/{connector}/{tool}` `{"risk": ...}`.
+
+Ordinary control that's easily put back and that Dan wouldn't want asked about every time
+(play, pause, volume) can declare `default_tier="read"` while keeping its honest `risk="write"`:
+it runs without asking unless Dan tightens it. The registry rejects a `default_tier` above
+`risk`. Use it sparingly; the reviewer checks every use.
 
 Give every `write` or `irreversible` tool a `confirm_summary`: a sentence starting with a verb
 that is formatted with the call's arguments and read back to Dan, e.g.
@@ -55,6 +69,10 @@ start it with a capital verb and no full stop. The dummy `test_messages` connect
    connectors (use a prefix such as `spotify_`).
 4. Test it: definition registers, tools load when enabled, undeclared tools are dropped.
 5. Write `docs/connectors/<name>.md`: how to get credentials, scopes, redirect URI.
+6. If it's a new specialist, register it with `uses_connectors=True` and give its tools eval
+   fixtures (`server/evals/README.md`).
+
+Connectors so far: [Spotify](connectors/spotify.md) (OAuth2, own async Web API toolkit).
 
 ### Worked example: the `time` connector
 

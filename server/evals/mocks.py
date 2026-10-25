@@ -15,8 +15,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from agno.tools import Toolkit
 
 from alfred_server.agents.context import RequestContext
+from alfred_server.connectors.models import AgnoToolkitSource, Credentials
+from alfred_server.connectors.registry import ConnectorRegistry, default_registry
 
 FIXTURES_FILE = Path(__file__).parent / "fixtures" / "tools.yaml"
 UNMOCKED_RESULT = '{"ok": true}'
@@ -60,3 +63,26 @@ class MockTools:
         args = dict(arguments or {})
         self.calls.append(ToolCall(function_name, args, function_name in self.fixtures))
         return self.result(function_name, args)
+
+
+@dataclass(frozen=True)
+class MockToolLoader:
+    """The router's connector-tool loader for evals: every toolkit connector of a specialist,
+    connected or not, built with empty credentials. Its calls are answered by `MockTools`, so
+    no service is contacted. MCP connectors are skipped (their tools need a live server).
+    """
+
+    registry: ConnectorRegistry = field(default_factory=default_registry)
+
+    async def __call__(self, specialist: str) -> list[Toolkit]:
+        loaded = []
+        for connector in self.registry.for_specialist(specialist):
+            if not isinstance(connector.tool_source, AgnoToolkitSource):
+                continue
+            toolkit = connector.tool_source.factory(Credentials())
+            declared = set(connector.tool_names)
+            for functions in (toolkit.functions, toolkit.async_functions):
+                for name in [n for n in functions if n not in declared]:
+                    del functions[name]
+            loaded.append(toolkit)
+        return loaded

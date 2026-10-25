@@ -9,9 +9,10 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from alfred_server.connectors.models import Connector, ToolMeta
+from alfred_server.connectors.models import Connector, Risk, ToolMeta
 
 _ID = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+_RISK_ORDER: dict[Risk, int] = {"read": 0, "write": 1, "irreversible": 2}
 
 
 class ConnectorRegistry:
@@ -34,6 +35,9 @@ class ConnectorRegistry:
         names = connector.tool_names
         if len(set(names)) != len(names):
             raise ValueError(f"connector {connector.id!r} declares a tool twice")
+        for tool in connector.tools:
+            if _RISK_ORDER[tool.tier] > _RISK_ORDER[tool.risk]:
+                raise ValueError(f"tool {tool.name!r}: default_tier is above its risk")
         # Tool names are global: risk gating and privacy routing look tools up by name alone.
         for tool in connector.tools:
             if tool.name in self._tools:

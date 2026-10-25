@@ -2,7 +2,7 @@
 
 A specialist is a name, a one-line description (shown to the router's classifier) and a
 factory that builds its Agno agent for one request on the model the router chose. Specialist
-tickets register theirs in `get_registry()`. Until they exist, the echo agent is `general`.
+tickets register theirs in `get_registry()`. The echo agent is `general` until a real one exists.
 """
 
 from collections.abc import Callable
@@ -15,6 +15,7 @@ from agno.models.base import Model
 
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.echo import build_echo_agent
+from alfred_server.agents.media import MEDIA_AGENT_NAME, build_media_agent
 
 # Handles anything no other specialist claims. Always registered.
 GENERAL = "general"
@@ -28,6 +29,9 @@ class Specialist:
     name: str
     description: str
     factory: AgentFactory
+    # True if the agent's tools come from connectors (`Connector.specialist == name`): the
+    # router loads them per request and adds them to the factory's agent before gating.
+    uses_connectors: bool = False
 
 
 class SpecialistRegistry:
@@ -55,11 +59,24 @@ def _general_factory(ctx: RequestContext, model: Model, db: BaseDb | AsyncBaseDb
     return build_echo_agent(ctx, db=db, model=model)
 
 
+def _media_factory(ctx: RequestContext, model: Model, db: BaseDb | AsyncBaseDb) -> Agent:
+    return build_media_agent(ctx, db=db, model=model)
+
+
 @lru_cache
 def get_registry() -> SpecialistRegistry:
     """The process-wide registry with every specialist registered."""
     registry = SpecialistRegistry()
     registry.register(
         Specialist(GENERAL, "general questions, chat and anything else", _general_factory)
+    )
+    registry.register(
+        Specialist(
+            MEDIA_AGENT_NAME,
+            "music: play artists, songs, playlists or music for a mood; pause, skip, volume, "
+            "what's playing, speakers (Spotify)",
+            _media_factory,
+            uses_connectors=True,
+        )
     )
     return registry

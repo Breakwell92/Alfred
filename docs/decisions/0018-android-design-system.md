@@ -40,4 +40,4 @@ Dan's app design (attached to STU-111: Home, Recording, Transmitting, Voice Prot
 - Screen tickets build from these components. A new colour goes into `AlfredColors`, never inline.
 - No dynamic colour or light mode. If either is ever wanted, add another `AlfredColors` instance; components already read only tokens.
 - The fonts add about 1.5 MB to the APK, mostly Rajdhani's Devanagari glyphs. Subsetting them is possible later if size matters.
-- The ripple-clipping and pressed-state behaviour was checked in previews and on an emulator, not by automated UI tests: the project has no Compose UI test or screenshot test setup. Shape geometry and theme mapping are unit-tested.
+- Ripple clipping, borders and pressed/disabled states have **not been checked on screen yet**: the emulator wouldn't boot headless when this was built, so it is pending Dan's check in the previews and on the phone (STU-112). Only shape geometry and the theme mapping are unit-tested; the project has no Compose UI or screenshot test setup.

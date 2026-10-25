@@ -67,6 +67,7 @@ fun StatTile(
     valueColor: Color = AlfredTheme.colors.textPrimary,
     corners: Set<Corner> = setOf(Corner.BottomEnd),
     horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
+    enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
 ) {
     val colors = AlfredTheme.colors
@@ -87,19 +88,20 @@ fun StatTile(
             modifier = modifier
                 .clip(shape)
                 .background(colors.surface),
-        ) { body(null) }
+        ) { body(if (enabled) null else colors.textDim) }
     } else {
         ShapedButton(
             shape = shape,
             onClick = onClick,
-            colors = { pressed, enabled ->
+            colors = { pressed, isEnabled ->
                 ButtonColors(
                     container = if (pressed) colors.surfacePressed else colors.surface,
-                    content = if (enabled) valueColor else colors.textDim,
+                    content = if (isEnabled) valueColor else colors.textDim,
                     border = null,
                 )
             },
             modifier = modifier,
+            enabled = enabled,
         ) { contentColor -> body(contentColor) }
     }
 }
@@ -143,12 +145,16 @@ fun SelectableCard(
             Modifier
                 .width(3.dp)
                 .fillMaxHeight()
-                .background(if (selected) colors.accent else Color.Transparent),
+                .background(if (selected && enabled) colors.accent else Color.Transparent),
         )
         Text(
             code.uppercase(),
             style = AlfredTheme.typography.label.copy(letterSpacing = AlfredTheme.typography.label.letterSpacing / 3),
-            color = if (selected) colors.accent else colors.textSecondary,
+            color = when {
+                !enabled -> colors.textDim
+                selected -> colors.accent
+                else -> colors.textSecondary
+            },
             modifier = Modifier
                 .padding(start = spacing.l)
                 .width(52.dp),
@@ -159,7 +165,11 @@ fun SelectableCard(
                 .weight(1f)
                 .padding(vertical = spacing.m, horizontal = spacing.m),
         ) {
-            Text(title.uppercase(), style = AlfredTheme.typography.title, color = colors.textPrimary)
+            Text(
+                title.uppercase(),
+                style = AlfredTheme.typography.title,
+                color = if (enabled) colors.textPrimary else colors.textDim,
+            )
             Text(
                 description,
                 style = AlfredTheme.typography.bodySmall,

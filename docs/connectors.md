@@ -42,6 +42,11 @@ the agent runs without them, so its instructions should say what to tell Dan whe
 tools (e.g. "Spotify isn't connected yet"). Look up a tool's risk or
 privacy with `get_connector_service().tool_meta("tool_name")`.
 
+Declare a tool `local_only` when what it returns is private (message bodies, notifications,
+anything that shows who's home). Its output then stays on local models whenever Dan's privacy
+settings (`GET/PUT /settings/privacy`, global switch plus per-connector overrides) don't allow
+it to go to cloud; the default allows it. See [ADR 0025](decisions/0025-privacy-routing.md).
+
 A tool that reports failures as a sentence rather than raising (as the Home Assistant and Spotify
 toolkits do) should return them as `ToolError("…")` (`connectors/models.py`). The agent sees the
 same string; routines ([ADR 0021](decisions/0021-routines.md)) use the type to report the step as

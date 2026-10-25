@@ -39,6 +39,7 @@ from alfred_server.agents.router import (
     Done,
     Failed,
     ModelFactory,
+    PrivacyGate,
     Route,
     RoutedReply,
     Router,
@@ -67,6 +68,7 @@ from alfred_server.models.gateway import (
     ModelAlias,
     gateway_model,
 )
+from alfred_server.privacy.service import get_privacy_service
 from alfred_server.routines.models import RoutineResult
 from alfred_server.routines.service import RoutineService, get_routine_service
 
@@ -152,14 +154,20 @@ def routine_service_dependency() -> RoutineService:
     return get_routine_service()
 
 
+def privacy_dependency() -> PrivacyGate:
+    """Dan's privacy settings: may `local_only` tool output go to cloud? Overridden in tests."""
+    return get_privacy_service()
+
+
 def router_dependency(
     db: Annotated[AsyncBaseDb, Depends(ready_agent_db)],
     model_factory: Annotated[ModelFactory, Depends(model_factory_dependency)],
     budget: Annotated[ChatBudget, Depends(budget_dependency)],
     confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
     tools: Annotated[ToolLoader, Depends(tool_loader_dependency)],
+    privacy: Annotated[PrivacyGate, Depends(privacy_dependency)],
 ) -> Router:
-    return Router(get_registry(), budget, model_factory, db, confirmations, tools)
+    return Router(get_registry(), budget, model_factory, db, confirmations, tools, privacy)
 
 
 @dataclass(frozen=True)

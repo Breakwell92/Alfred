@@ -18,6 +18,7 @@ from alfred_server.chat import (
     budget_dependency,
     confirmation_service_dependency,
     model_factory_dependency,
+    privacy_dependency,
     routine_service_dependency,
     tool_loader_dependency,
 )
@@ -45,7 +46,7 @@ from tests.llm_fakes import (
     streamed_tool_call,
     tool_call_completion,
 )
-from tests.router_fakes import USD_PER_TOKEN, FakeBudget, deny
+from tests.router_fakes import USD_PER_TOKEN, FakeBudget, FakePrivacy, deny
 from tests.spotify_fakes import FakeSpotify
 
 TOKEN = "test-token-not-a-secret"
@@ -106,6 +107,8 @@ class ChatHarness:
         # A lambda so tests can swap `self.budget` after the harness is built.
         self.app.dependency_overrides[budget_dependency] = lambda: self.budget
         self.app.dependency_overrides[confirmation_service_dependency] = lambda: self.confirmations
+        self.privacy = FakePrivacy()  # the seed: private output may go to cloud
+        self.app.dependency_overrides[privacy_dependency] = lambda: self.privacy
         # Connector tools: a fake Spotify for the media specialist.
         self.spotify = FakeSpotify()
         self.app.dependency_overrides[tool_loader_dependency] = lambda: self._tools

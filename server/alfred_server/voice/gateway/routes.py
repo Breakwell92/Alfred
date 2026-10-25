@@ -12,13 +12,14 @@ from typing import Annotated
 from agno.db.base import AsyncBaseDb
 from fastapi import APIRouter, Depends, WebSocket
 
-from alfred_server.agents.router import ModelFactory, ToolLoader
+from alfred_server.agents.router import ModelFactory, PrivacyGate, ToolLoader
 from alfred_server.chat import (
     ChatBudget,
     agent_db_dependency,
     budget_dependency,
     confirmation_service_dependency,
     model_factory_dependency,
+    privacy_dependency,
     routine_service_dependency,
     tool_loader_dependency,
 )
@@ -67,6 +68,7 @@ async def device_socket(
     confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
     tools: Annotated[ToolLoader, Depends(tool_loader_dependency)],
     routines: Annotated[RoutineService, Depends(routine_service_dependency)],
+    privacy: Annotated[PrivacyGate, Depends(privacy_dependency)],
     stt: Annotated[SpeechToText | None, Depends(voice_stt_dependency)],
     tts: Annotated[LocalTTS | None, Depends(voice_tts_dependency)],
 ) -> None:
@@ -82,5 +84,6 @@ async def device_socket(
         # Personas (STU-66) will pick the voice per turn.
         voice=tts.default_voice if tts is not None else None,
         routines=routines,
+        privacy=privacy,
     )
     await DeviceConnection(websocket, services, hub).serve()

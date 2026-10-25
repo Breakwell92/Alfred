@@ -22,6 +22,7 @@ from alfred_server.confirmations.store import ConfirmationStore
 from alfred_server.connectors.models import AgnoToolkitSource, Connector, ToolMeta
 from alfred_server.connectors.registry import default_registry
 from alfred_server.models.gateway import ModelAlias
+from alfred_server.privacy.models import PrivacySettings
 from tests.budget_helpers import memory_engine
 
 ALLOW = BudgetDecision(True, "ok", "free", "About £0.01; £19.99 left this month.")
@@ -71,6 +72,24 @@ class FakeBudget:
     ) -> CostEstimate:
         usd = (prompt_tokens + expected_output_tokens) * USD_PER_TOKEN
         return CostEstimate(alias, prompt_tokens, expected_output_tokens, usd, usd * 0.8)
+
+
+class FakePrivacy:
+    """`PrivacyGate` with canned settings (default: the seed, private output may go to cloud).
+
+    With `error` set, reading the settings raises it.
+    """
+
+    def __init__(
+        self, settings: PrivacySettings | None = None, error: Exception | None = None
+    ) -> None:
+        self.value = settings or PrivacySettings()
+        self.error = error
+
+    def settings(self) -> PrivacySettings:
+        if self.error is not None:
+            raise self.error
+        return self.value
 
 
 def read_only_connector(*tool_names: str) -> Connector:

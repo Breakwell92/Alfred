@@ -25,6 +25,7 @@ from alfred_server.agents.router import (
     AgentRunError,
     Done,
     ModelFactory,
+    PrivacyGate,
     Route,
     Router,
     Token,
@@ -74,6 +75,8 @@ class VoiceServices:
     voice: VoiceConfig | None
     # Saved routines, matched before the router. None: no routines (some tests).
     routines: RoutineService | None = None
+    # Dan's privacy settings. None: the default, private output may go to cloud (some tests).
+    privacy: PrivacyGate | None = None
 
     @property
     def voice_ready(self) -> bool:
@@ -89,6 +92,7 @@ class VoiceServices:
             self.db,
             self.confirmations,
             self.tools,
+            self.privacy,
         )
 
 

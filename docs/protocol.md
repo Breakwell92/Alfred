@@ -44,7 +44,7 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 | `turn.start` | `turn_id`, `sample_rate` (16000), `persona_id`?, `context`? `{active_room?, location?}` | Opens a turn. Audio frames follow. One turn at a time. |
 | `turn.end` | `turn_id` | End of speech: the server transcribes and answers. |
 | `turn.cancel` | `turn_id` | Stops the turn wherever it is (listening, thinking or speaking). Answered by `turn.cancelled`; nothing if it had already finished. |
-| `confirm.reply` | `confirmation_id`, `approve` (bool), `turn_id`? | The app's yes/no buttons for a `confirm.request`. Its spoken answer is a turn tagged `turn_id`, default `confirm-<confirmation_id>`. |
+| `confirm.reply` | `confirmation_id` (at most 56 characters), `approve` (bool), `turn_id`? | The app's yes/no buttons for a `confirm.request`. Its spoken answer is a turn tagged `turn_id`, default `confirm-<confirmation_id>`. |
 
 `turn_id`: 1–64 of `A–Z a–z 0–9 . _ : -`. `device_id`, `session_id`, `persona_id`: the same characters. `context` strings: one line, at most 100 characters, no `<` or `>` (they go into the agent's prompt).
 
@@ -105,6 +105,7 @@ Tools that change things are gated ([ADR 0013](decisions/0013-confirmation-gatin
 - **`write`** can be answered by voice: the next turn's transcript is checked first. A plain "yes"/"no" is matched directly; anything looser ("yeah, go on then") is classified by `local-router`. A yes runs the tool and speaks the result; a no is spoken as "OK, I won't …". Anything else (a new request, or the check failing) cancels the pending confirmation and is answered as a normal request. The app's buttons can send `confirm.reply` instead.
 - **`irreversible`** can't be approved by voice or `confirm.reply`: the server says "That one needs approving in the Alfred app." and sends the `confirm.request` again. The app approves it on its confirmation screen with `POST /confirmations/{id}` `{"approve": true, "channel": "app_ui"}` (STU-109 will bind that to the app).
 - Pending confirmations expire after `ALFRED_CONFIRMATION_TTL_S` (2 min).
+- Once a confirmation is approved, the action runs to completion and is stored in the conversation even if the turn is cancelled (`turn.cancel`, a disconnect, or a reconnect replacing the connection). Only the spoken reply is lost.
 
 ## Reserved
 

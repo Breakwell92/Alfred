@@ -19,11 +19,15 @@ from typing import Any
 import numpy as np
 import pytest
 from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
-from alfred_server.config import Settings
+from alfred_server.agents import echo
+from alfred_server.agents.context import RequestContext
+from alfred_server.config import Settings, get_settings
 from alfred_server.connectors.builtin.test_messages import SENT_TEST_MESSAGES
+from alfred_server.voice.gateway import pipeline
 from alfred_server.voice.gateway.connection import (
     CLOSE_BAD_HELLO,
     CLOSE_NOT_CONFIGURED,
@@ -31,7 +35,10 @@ from alfred_server.voice.gateway.connection import (
     CLOSE_TIMEOUT,
     CLOSE_UNAUTHORIZED,
 )
+from alfred_server.voice.gateway.pipeline import VoiceServices, VoiceTurn
 from alfred_server.voice.gateway.protocol import (
+    TURN_ID_PATTERN,
+    ConfirmReply,
     ProtocolError,
     TurnStart,
     audio_frame,
@@ -767,3 +774,120 @@ def test_fixture_audio_through_real_stt(harness: VoiceHarness) -> None:
 
 def words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def test_confirm_reply_from_another_conversation_is_refused(tools_harness: VoiceHarness) -> None:
+    h = tools_harness
+    with h.connect() as ws:
+        hello(ws)
+        c = ask_to_send(h, ws).first("confirm.request")
+    with h.connect() as other:  # another device, in its own conversation
+        hello(other, device_id="tablet-1")
+        other.send_json({"type": "confirm.reply", "confirmation_id": c["id"], "approve": True})
+        turn = receive_turn(other)
+    assert turn.messages[-1]["code"] == "unknown_confirmation"
+    assert SENT_TEST_MESSAGES == []
+    assert [p.id for p in h.confirmations.pending()] == [c["id"]]
+
+
+def test_confirm_reply_after_expiry(tools_harness: VoiceHarness) -> None:
+    h = tools_harness
+    with h.connect() as ws:
+        hello(ws)
+        c = ask_to_send(h, ws).first("confirm.request")
+        h.clock.advance(seconds=121)
+        ws.send_json({"type": "confirm.reply", "confirmation_id": c["id"], "approve": True})
+        turn = receive_turn(ws)
+    assert turn.messages[-1]["code"] == "confirmation_closed"
+    stored = h.confirmations.get(c["id"])
+    assert stored is not None and stored.status == "expired"
+    assert SENT_TEST_MESSAGES == []
+
+
+class RecordingSender:
+    def __init__(self) -> None:
+        self.messages: list[dict[str, Any]] = []
+
+    async def send_json(self, data: dict[str, Any]) -> None:
+        self.messages.append(data)
+
+    async def send_bytes(self, data: bytes) -> None:
+        pass
+
+
+@pytest.mark.parametrize("entry", ["confirm_reply", "spoken_yes"])
+def test_an_approved_action_finishes_when_its_turn_is_cancelled(
+    tools_harness: VoiceHarness, monkeypatch: pytest.MonkeyPatch, entry: str
+) -> None:
+    """A disconnect, a reconnect or `turn.cancel` mid-resume drops only the spoken reply."""
+    h = tools_harness
+    with h.connect() as ws:
+        session_id = hello(ws)["session_id"]
+        c = ask_to_send(h, ws).first("confirm.request")
+    record = h.confirmations.get(c["id"])
+    assert record is not None
+    gate: dict[str, asyncio.Event] = {}
+
+    async def send_test_message(recipient: str, text: str) -> str:
+        """Send a test message to someone.
+
+        Args:
+            recipient: Who the message is for.
+            text: The message text.
+        """
+        gate["entered"].set()
+        await gate["release"].wait()  # still running when the turn is cancelled
+        SENT_TEST_MESSAGES.append((recipient, text))
+        return f"Test message sent to {recipient}."
+
+    monkeypatch.setattr(echo, "send_test_message", send_test_message)
+    h.reply_with(reply("Sent."))
+
+    async def scenario() -> RunStatus:
+        gate["entered"], gate["release"] = asyncio.Event(), asyncio.Event()
+        services = VoiceServices(
+            get_settings(),
+            h.db,
+            h._model,
+            h.budget,
+            h.confirmations,
+            h.stt,
+            h.tts,
+            h.tts.default_voice,
+        )
+        ctx = RequestContext.build(
+            timezone="Europe/London", device_type="phone", session_id=session_id
+        )
+        turn = VoiceTurn("t", RecordingSender(), services, ctx)
+        answer = ConfirmReply(type="confirm.reply", confirmation_id=c["id"], approve=True)
+        work = (
+            (lambda: turn.from_confirm_reply(answer))
+            if entry == "confirm_reply"
+            else (lambda: turn.respond("Yes."))
+        )
+        task = asyncio.create_task(turn.guarded(work))
+        await asyncio.wait_for(gate["entered"].wait(), 5)
+        task.cancel()  # what the connection does on disconnect, replace or turn.cancel
+        await asyncio.wait([task])
+        assert task.cancelled()
+        gate["release"].set()
+        # The answer carries on detached from the cancelled turn; wait for it to finish.
+        await asyncio.wait_for(asyncio.gather(*pipeline._DETACHED), 5)
+        run: Any = await h.db.get_run(record.run_id)
+        return RunStatus(run.status)
+
+    assert asyncio.run(scenario()) == RunStatus.completed
+    assert SENT_TEST_MESSAGES == [("Sam", "Running 10 mins late")]
+
+
+def test_confirmation_ids_fit_the_default_turn_id() -> None:
+    longest = "a" * 56
+    message = parse_message(
+        json.dumps({"type": "confirm.reply", "confirmation_id": longest, "approve": True})
+    )
+    assert isinstance(message, ConfirmReply)
+    assert re.fullmatch(TURN_ID_PATTERN, f"confirm-{longest}")
+    with pytest.raises(ProtocolError):
+        parse_message(
+            json.dumps({"type": "confirm.reply", "confirmation_id": "a" * 57, "approve": True})
+        )

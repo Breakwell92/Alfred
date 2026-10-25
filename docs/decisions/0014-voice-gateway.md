@@ -32,6 +32,7 @@ The phone (STU-65) streams audio after the wake word and plays back streamed spe
 - `confirm.reply` (the app's buttons) is also channel `voice`. It can approve `write`. It can't approve `irreversible`: those are approved on the app's confirmation screen through `POST /confirmations/{id}` with `app_ui`. So the client-asserted `app_ui` flag stays on one route for STU-109 to harden, and the voice socket can't be used to claim it.
 - Answers are only accepted for the connection's own conversation.
 - A device should send `confirm.reply` after the asking turn's `reply.audio.end`. Sooner gets `busy`, because one turn runs at a time.
+- Once an answer starts resuming a run, it runs detached from the turn (`pipeline._detached`, `asyncio.shield`). The approval is already recorded at that point, so cancelling the run would leave an approved action that never ran or was never stored. A disconnect, a reconnect or `turn.cancel` drops only the spoken reply.
 
 **Services per connection, router per turn.** The socket resolves the same dependency providers as `/chat` (agent db, model factory, budget, confirmations; overridable in tests) plus STT/TTS (`None` when `ALFRED_STT_ENABLED` / `ALFRED_TTS_ENABLED` is off, which refuses turns with `voice_unavailable`). Each turn builds a `Router` and checks the agent db first, as `/chat` does per request.
 
@@ -58,7 +59,7 @@ The first turn after start-up was slower (about 1.6 s), and the first gated tool
 
 - STU-65 (the Android client) implements `docs/protocol.md`. STU-81 and STU-84 add their reserved message types, and pushes will reach a device through `DeviceHub.get`.
 - Personas (STU-66) will pick the TTS voice per turn; today every turn uses `LocalTTS.default_voice` and `persona_id` only reaches the agent's context.
-- A cancelled turn cancels its Agno run mid-flight; Agno may leave that run stored as running. Nothing reads it today.
+- A cancelled turn cancels its Agno run mid-flight, except an approved confirmation's resume, which always finishes. Agno may leave a cancelled run stored as running. Nothing reads it today.
 - Interim transcripts need a streaming STT engine. The protocol slot exists.
 - Latency headroom is about 600 ms on simple requests. Tool calls and confirmations are near the limit. Filler phrases during slow tool calls are STU-67.
 - The server only knows when `turn.end` arrived. The phone's VAD (STU-69) adds its end-of-speech delay before that, and should be measured on the phone.

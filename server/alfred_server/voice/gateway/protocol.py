@@ -97,7 +97,8 @@ class ConfirmReply(_Message):
     """A tap on the app's yes/no buttons for a `confirm.request`."""
 
     type: Literal["confirm.reply"]
-    confirmation_id: str = Field(max_length=64, pattern=r"^[A-Za-z0-9-]+$")
+    # At most 56 characters, so the default turn id `confirm-<id>` fits `TURN_ID_PATTERN`.
+    confirmation_id: str = Field(max_length=56, pattern=r"^[A-Za-z0-9-]+$")
     approve: bool
     # Tags the spoken answer's audio; defaults to `confirm-<confirmation_id>`.
     turn_id: str | None = Field(default=None, pattern=TURN_ID_PATTERN)

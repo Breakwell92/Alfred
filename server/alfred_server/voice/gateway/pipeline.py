@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -191,8 +191,9 @@ class VoiceTurn:
         """Answer a pending confirmation with `text`, or route it as a new request."""
         router = self.services.router()
         await self._check_storage()
-        answered = await answer_pending(
-            text, self.ctx, self.services.confirmations, router, parse=self._yes_no
+        # Shielded: a "yes" here resumes the paused run, which must finish (see `_detached`).
+        answered = await _detached(
+            answer_pending(text, self.ctx, self.services.confirmations, router, parse=self._yes_no)
         )
         if answered is not None:
             await self._speak_answer(answered)
@@ -217,7 +218,7 @@ class VoiceTurn:
             raise TurnFailed("confirmation_closed", "This confirmation has expired")
         if c.status != "pending":
             raise TurnFailed("confirmation_closed", f"This confirmation was already {c.status}")
-        await self._speak_answer(await self._answer(c, reply.approve, router))
+        await self._speak_answer(await _detached(self._answer(c, reply.approve, router)))
 
     # --- Stages -----------------------------------------------------------------------------
 
@@ -323,6 +324,38 @@ class VoiceTurn:
             await db.upsert_run(run, session_id=self.ctx.session_id)
         except Exception:
             logger.warning("couldn't store voice timings on run %s", run_id, exc_info=True)
+
+
+# Answers still running after their turn was cancelled; held so they aren't garbage collected.
+_DETACHED: set[asyncio.Task[Any]] = set()
+
+
+async def _detached[T](work: Coroutine[Any, Any, T]) -> T:
+    """Run `work` to completion even if the turn awaiting it is cancelled.
+
+    Used for answering a confirmation: once it's resolved `approved`, the run must continue
+    and be stored, whether or not the device is still there to hear the result. A disconnect,
+    a reconnect (which replaces the connection) or `turn.cancel` cancels the turn, and with it
+    only the spoken reply; the action and its record in the conversation still complete.
+    """
+    task = asyncio.create_task(work)
+    _DETACHED.add(task)
+    task.add_done_callback(_DETACHED.discard)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        task.add_done_callback(_log_abandoned)
+        raise
+
+
+def _log_abandoned(task: asyncio.Task[Any]) -> None:
+    """Nobody is waiting for this answer any more: log how it ended."""
+    if task.cancelled():
+        return
+    if (exc := task.exception()) is not None:
+        logger.error("answering a confirmation failed after its turn ended", exc_info=exc)
+    else:
+        logger.info("a confirmation was answered after its turn ended; the reply wasn't spoken")
 
 
 class _Speaker:

@@ -1,10 +1,12 @@
 package com.alfred.app.data.reliability
 
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.alfred.app.MainActivity
@@ -22,21 +24,29 @@ interface ServiceStarter {
 class AndroidServiceStarter(
     private val context: Context,
     private val recorder: ReliabilityRecorder,
+    private val inForeground: () -> Boolean = ::appInForeground,
 ) : ServiceStarter {
     override val isRunning: Boolean
         get() = WakeWordService.isRunning
 
-    override suspend fun tryStart(reason: StartReason): Boolean = try {
-        WakeWordService.start(context, reason)
-        true
-    } catch (e: IllegalStateException) {
-        // ForegroundServiceStartNotAllowedException (Android 12+) is an IllegalStateException.
-        blocked(reason, e)
-    } catch (e: SecurityException) {
-        blocked(reason, e)
+    override suspend fun tryStart(reason: StartReason): Boolean {
+        // On Android 14+ a background start often gets past startForegroundService (boot and
+        // battery-exempt apps are allowed to start services), then the mic's startForeground
+        // throws and the service stops before calling it, which Android punishes by crashing
+        // the app. The mic start would be refused anyway, so ask Dan straight away.
+        if (mustAskFirst(Build.VERSION.SDK_INT, inForeground())) return blocked(reason, null)
+        return try {
+            WakeWordService.start(context, reason)
+            true
+        } catch (e: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException (Android 12+) is an IllegalStateException.
+            blocked(reason, e)
+        } catch (e: SecurityException) {
+            blocked(reason, e)
+        }
     }
 
-    private suspend fun blocked(reason: StartReason, e: Exception): Boolean {
+    private suspend fun blocked(reason: StartReason, e: Exception?): Boolean {
         Log.w(TAG, "Couldn't start the wake word service (${reason.wire})", e)
         recorder.restartBlocked(reason.wire)
         StoppedListeningNotification.show(context)
@@ -46,6 +56,20 @@ class AndroidServiceStarter(
     private companion object {
         const val TAG = "ServiceStarter"
     }
+}
+
+/**
+ * True when a background start of the mic service should go straight to the notification: on
+ * Android 14+ (API 34) it can't get the mic from the background, and trying risks a crash.
+ */
+fun mustAskFirst(sdkInt: Int, inForeground: Boolean): Boolean =
+    sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !inForeground
+
+/** Whether this process has something on screen (or a foreground service, which it doesn't here). */
+private fun appInForeground(): Boolean {
+    val info = ActivityManager.RunningAppProcessInfo()
+    ActivityManager.getMyMemoryState(info)
+    return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
 }
 
 /**

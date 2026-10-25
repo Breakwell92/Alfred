@@ -17,6 +17,8 @@ So the app can notice when the service is gone, but on current Android it can't 
 
 **One way back for every background path: try to start the service, and if Android refuses, ask Dan with a notification.** The notification says "Alfred stopped listening · Tap to resume". The tap opens `MainActivity`, a visible activity, which is allowed to start the service (with start reason `resume`). On phones and Android versions that do allow the start, the service just comes back. Code: `data/reliability/ServiceStarter.kt` (`AndroidServiceStarter`, `StoppedListeningNotification`).
 
+On Android 14+ (API 34) `AndroidServiceStarter` doesn't even try from the background (`mustAskFirst`: API 34+ and the app not in the foreground). It records `restart_blocked` and posts the notification straight away. Trying would be worse than useless. Boot and battery-exempt apps are allowed to call `startForegroundService`, so the call succeeds, and then the mic's `startForeground` throws. The service is then torn down without ever calling `startForeground`, which Android punishes by crashing the app ("did not then call Service.startForeground()").
+
 The background paths are:
 - **Boot and app update.** `service/BootReceiver` handles `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, and does something only if the wake word is on and the mic is granted. It schedules the watchdog and tries to start the service. It doesn't handle `LOCKED_BOOT_COMPLETED`, because the settings DataStore can't be read before the first unlock.
 - **The watchdog.** `data/reliability/Watchdog.kt` is a WorkManager periodic job every 15 minutes, which is WorkManager's minimum. It runs while the wake word is on: `MainActivity` schedules it when the toggle is on and cancels it when it's off. If the service should be running and isn't (`watchdogAction`), it logs `down` with the gap so far and tries to start the service.
@@ -28,7 +30,8 @@ The notification uses `setOnlyAlertOnce`, so the watchdog posting it again every
 - While running, the service writes `lastAliveAt` every minute.
 - The Settings toggle turning the service off marks `cleanStop`. `onDestroy` doesn't, because Android can stop it too.
 - A start that finds `cleanStop == false` was a death: it counts as a restart, with gap = now − `lastAliveAt` (at most a minute more than the real gap) and the start reason (`boot`, `watchdog`, `resume`, `sticky`, `package_replaced`, `app`).
-- Reconnects are counted from the socket's state: each Connected after an earlier Connected in the same process.
+- Reconnects are counted from the socket's state: each Connected after the socket dropped (`Waiting`, or `Connecting` after a Connected). A deliberate stop (`Offline`: the app left the screen with the wake word off, or the wake word was turned off) and a settings problem (`NotConfigured`, `Rejected`) start the count over, so coming back from those isn't counted.
+- `hello.health.listening_since` is sent only while the service is actually running.
 
 `ReliabilityRecorder` is the only thing that writes all this, and it also appends to `files/reliability_events.jsonl`, one JSON object per line: `{kind, at (epoch ms), reason?, gap_ms?}`. The kinds are:
 
@@ -63,7 +66,7 @@ Read the log with `adb shell run-as com.alfred.app cat files/reliability_events.
 | Check | How | Result |
 | --- | --- | --- |
 | 48 h soak, normal use | Wake word on, battery exemption allowed, use the phone normally for 48 h. Say the wake word now and then. Afterwards, list the `started` events with `gap_ms` and every `down` / `restart_blocked`. | pending |
-| Reboot | Reboot with the wake word on. Note whether the service started by itself or the "Tap to resume" notification appeared, and whether one tap brings it back. | pending |
+| Reboot | Reboot with the wake word on. Note whether the service started by itself or the "Tap to resume" notification appeared, and whether one tap brings it back. Check that there's no crash: no "Alfred keeps stopping" dialog, and nothing from `adb logcat -b crash` for `com.alfred.app`. | pending |
 | Swipe from recents | Swipe Alfred away in recents, wait 1 min, then say the wake word. If it stopped, note whether the notification appears (straight away, or at the next watchdog run ≤ 15 min). | pending |
 | Force stop | Settings → Apps → Alfred → Force stop. Android then blocks receivers, jobs and restarts until the app is opened again. That's expected, and nothing can recover it. Opening the app starts listening again. | pending |
 | Battery dialog | Turn the wake word off and on with the exemption not granted. The dialog appears; after allowing it, Settings shows "Battery: unrestricted". | pending |

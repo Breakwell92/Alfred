@@ -71,9 +71,12 @@ data class ServiceHealth(
 
     fun reconnected(): ServiceHealth = copy(reconnectCount = reconnectCount + 1)
 
-    /** What `hello.health` reports to the server. */
-    fun toDeviceHealth(): DeviceHealth = DeviceHealth(
-        listeningSinceMillis = listeningSince.takeUnless { cleanStop },
+    /**
+     * What `hello.health` reports to the server. [running]: the service is up now; after a death
+     * [listeningSince] is the dead service's start until the next start replaces it.
+     */
+    fun toDeviceHealth(running: Boolean): DeviceHealth = DeviceHealth(
+        listeningSinceMillis = listeningSince.takeIf { running && !cleanStop },
         restarts = restartCount,
         reconnects = reconnectCount,
         lastRestartAtMillis = lastRestartAt,

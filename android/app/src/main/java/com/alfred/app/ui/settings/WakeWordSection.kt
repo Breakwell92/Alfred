@@ -81,7 +81,7 @@ fun WakeWordSection(viewModel: WakeWordSettingsViewModel = koinViewModel()) {
         now = now,
         onAllowBackground = { requestBatteryExemption(context) },
         onOpenHelp = {
-            context.startActivity(Intent(Intent.ACTION_VIEW, dontKillMyAppUrl(Build.MANUFACTURER).toUri()))
+            startIfPresent(context, Intent(Intent.ACTION_VIEW, dontKillMyAppUrl(Build.MANUFACTURER).toUri()))
         },
         onEnabledChange = { enabled ->
             if (!enabled) {
@@ -116,12 +116,18 @@ private fun isIgnoringBatteryOptimizations(context: Context): Boolean =
 @SuppressLint("BatteryLife")
 private fun requestBatteryExemption(context: Context) {
     val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri())
-    try {
-        context.startActivity(request)
-    } catch (e: ActivityNotFoundException) {
-        // Some OEM builds drop the dialog; their battery list is the next best thing.
-        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+    // Some OEM builds drop the dialog; their battery list is the next best thing.
+    if (!startIfPresent(context, request)) {
+        startIfPresent(context, Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
     }
+}
+
+/** False if nothing on the phone handles [intent] (stripped OEM builds, no browser). */
+private fun startIfPresent(context: Context, intent: Intent): Boolean = try {
+    context.startActivity(intent)
+    true
+} catch (e: ActivityNotFoundException) {
+    false
 }
 
 @Composable

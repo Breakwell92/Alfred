@@ -56,10 +56,12 @@ class ServiceHealthTest {
     }
 
     @Test
-    fun `reports listening since only while it should be running`() {
+    fun `reports listening since only while it's running`() {
         val running = ServiceHealth().started(2_000, StartReason.Boot).reconnected()
-        assertEquals(DeviceHealth(2_000, restarts = 0, reconnects = 1), running.toDeviceHealth())
-        assertNull(running.stoppedCleanly(3_000).toDeviceHealth().listeningSinceMillis)
+        assertEquals(DeviceHealth(2_000, restarts = 0, reconnects = 1), running.toDeviceHealth(running = true))
+        // Died, not started again yet: the old start time isn't "listening since".
+        assertNull(running.toDeviceHealth(running = false).listeningSinceMillis)
+        assertNull(running.stoppedCleanly(3_000).toDeviceHealth(running = true).listeningSinceMillis)
     }
 
     @Test

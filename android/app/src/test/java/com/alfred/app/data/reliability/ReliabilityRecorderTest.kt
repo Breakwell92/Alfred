@@ -70,7 +70,7 @@ class ReliabilityRecorderTest {
     }
 
     @Test
-    fun `counts a reconnect each time it's connected again, not the first time`() = runTest {
+    fun `counts a reconnect each time it's connected again after a drop, not the first time`() = runTest {
         val states = MutableStateFlow<LinkState>(LinkState.Connecting)
         val job = launchCounting(states)
 
@@ -79,12 +79,30 @@ class ReliabilityRecorderTest {
         states.value = LinkState.Waiting("gone", 1_000)
         states.value = LinkState.Connecting
         states.value = LinkState.Connected("s", voice = true)
-        states.value = LinkState.Offline
+        states.value = LinkState.Connecting // e.g. "Replaced by another connection", retried at once
         states.value = LinkState.Connected("s", voice = true)
         job.cancel()
 
         assertEquals(2, health.health.value.reconnectCount)
         assertEquals(2, log.events.count { it.kind == Kind.Reconnect })
+    }
+
+    @Test
+    fun `a deliberate stop and start isn't a reconnect`() = runTest {
+        val states = MutableStateFlow<LinkState>(LinkState.Offline)
+        val job = launchCounting(states)
+
+        states.value = LinkState.Connecting
+        states.value = LinkState.Connected("s", voice = true)
+        states.value = LinkState.Offline // the app left the screen with the wake word off
+        states.value = LinkState.Connecting
+        states.value = LinkState.Connected("s", voice = true)
+        states.value = LinkState.Rejected("bad token")
+        states.value = LinkState.Connected("s", voice = true)
+        job.cancel()
+
+        assertEquals(0, health.health.value.reconnectCount)
+        assertTrue(log.events.none { it.kind == Kind.Reconnect })
     }
 
     @Test

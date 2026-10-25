@@ -48,6 +48,7 @@ import com.alfred.app.data.wakeword.WakeFeedback
 import com.alfred.app.data.wakeword.WakeSignals
 import com.alfred.app.data.wakeword.WakeWordController
 import com.alfred.app.data.wakeword.WakeWordSettingsRepository
+import com.alfred.app.service.WakeWordService
 import com.alfred.app.ui.home.HomeViewModel
 import com.alfred.app.ui.home.VoiceViewModel
 import com.alfred.app.ui.recording.RecordingViewModel
@@ -100,7 +101,7 @@ val appModule = module {
             deviceIds = get(),
             appVersion = BuildConfig.VERSION_NAME,
             scope = get(named(APP_SCOPE)),
-            healthProvider = { health.health.first().toDeviceHealth() },
+            healthProvider = { health.health.first().toDeviceHealth(WakeWordService.isRunning) },
         )
     }
     single<AudioCapture> { AudioRecordCapture(androidContext()) }

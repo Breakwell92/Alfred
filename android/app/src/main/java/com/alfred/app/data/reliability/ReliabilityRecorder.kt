@@ -52,17 +52,24 @@ class ReliabilityRecorder(
     }
 
     /**
-     * Counts a reconnect each time [states] reaches Connected again after having been connected
-     * (the first connection of the process isn't one). Runs until cancelled.
+     * Counts a reconnect each time [states] reaches Connected again after the socket dropped
+     * (Waiting, or Connecting after a Connected). A deliberate stop (Offline: the app left the
+     * screen with the wake word off, or the wake word was turned off) and a settings problem
+     * start the count over, so coming back from those isn't one. Runs until cancelled.
      */
     suspend fun countReconnects(states: Flow<LinkState>) {
         var wasConnected = false
         var connected = false
         states.collect { state ->
             val isConnected = state is LinkState.Connected
-            if (isConnected && !connected) {
-                if (wasConnected) reconnected()
-                wasConnected = true
+            when {
+                isConnected && !connected -> {
+                    if (wasConnected) reconnected()
+                    wasConnected = true
+                }
+                state is LinkState.Offline || state is LinkState.NotConfigured || state is LinkState.Rejected ->
+                    wasConnected = false
+                else -> Unit
             }
             connected = isConnected
         }

@@ -4,7 +4,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.PressGestureScope
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,13 +23,18 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.alfred.app.ui.theme.AlfredTheme
@@ -41,6 +50,11 @@ internal data class ButtonColors(val container: Color, val content: Color, val b
 /**
  * The base of every shaped button: fill, border and ripple are all clipped to [shape], the fill
  * changes while pressed, and a disabled button dims and ignores taps.
+ *
+ * With [onPress] the button follows the finger instead of waiting for a click: [onPress] runs
+ * when it goes down and can wait for the release (`tryAwaitRelease`), e.g. hold to talk.
+ * [onClick] is then what accessibility services do. [onDisabledClick] lets a disabled button
+ * say why it is disabled when tapped.
  */
 @Composable
 internal fun ShapedButton(
@@ -51,24 +65,55 @@ internal fun ShapedButton(
     enabled: Boolean = true,
     borderWidth: Dp = 1.5.dp,
     interactionSource: MutableInteractionSource? = null,
+    onPress: (suspend PressGestureScope.() -> Unit)? = null,
+    onDisabledClick: (() -> Unit)? = null,
     content: @Composable (contentColor: Color) -> Unit,
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val c = colors(pressed, enabled)
+    val currentOnPress by rememberUpdatedState(onPress)
+    val currentOnClick by rememberUpdatedState(onClick)
+    val input = when {
+        !enabled && onDisabledClick != null ->
+            Modifier.clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onDisabledClick)
+        onPress != null && enabled -> Modifier
+            .indication(source, ripple(color = c.content))
+            .semantics {
+                role = Role.Button
+                onClick(label = null) {
+                    currentOnClick()
+                    true
+                }
+            }
+            .pointerInput(source) {
+                detectTapGestures(
+                    onPress = { offset ->
+                        val press = PressInteraction.Press(offset)
+                        source.tryEmit(press)
+                        try {
+                            currentOnPress?.invoke(this)
+                        } finally {
+                            source.tryEmit(PressInteraction.Release(press))
+                        }
+                    },
+                )
+            }
+        else -> Modifier.clickable(
+            interactionSource = source,
+            indication = ripple(color = c.content),
+            enabled = enabled,
+            role = Role.Button,
+            onClick = onClick,
+        )
+    }
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .clip(shape)
             .background(c.container, shape)
             .then(if (c.border != null) Modifier.border(BorderStroke(borderWidth, c.border), shape) else Modifier)
-            .clickable(
-                interactionSource = source,
-                indication = ripple(color = c.content),
-                enabled = enabled,
-                role = Role.Button,
-                onClick = onClick,
-            ),
+            .then(input),
     ) {
         content(c.content)
     }
@@ -127,7 +172,8 @@ fun ChamferIconButton(
 
 /**
  * The main action: an accent-filled octagon, or with [outlined] a dark octagon with an accent
- * border (the stop state while recording).
+ * border (the stop state while recording). [onPress] and [onDisabledClick] as on [ShapedButton]
+ * (Home's mic: hold to talk, and "not connected" when tapped while disabled).
  */
 @Composable
 fun OctagonActionButton(
@@ -139,6 +185,8 @@ fun OctagonActionButton(
     enabled: Boolean = true,
     size: Dp = 88.dp,
     interactionSource: MutableInteractionSource? = null,
+    onPress: (suspend PressGestureScope.() -> Unit)? = null,
+    onDisabledClick: (() -> Unit)? = null,
 ) {
     val colors = AlfredTheme.colors
     val filled = accentColors()
@@ -160,6 +208,8 @@ fun OctagonActionButton(
         enabled = enabled,
         borderWidth = 2.dp,
         interactionSource = interactionSource,
+        onPress = onPress,
+        onDisabledClick = onDisabledClick,
     ) { contentColor ->
         Icon(icon, contentDescription = contentDescription, tint = contentColor, modifier = Modifier.size(size * 0.4f))
     }

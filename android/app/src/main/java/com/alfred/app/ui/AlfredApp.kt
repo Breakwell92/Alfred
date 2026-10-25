@@ -39,9 +39,9 @@ import com.alfred.app.ui.recording.RecordingScreen
 import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsScreen
 import com.alfred.app.ui.theme.AlfredTheme
-import kotlinx.coroutines.launch
 import com.alfred.app.ui.transmitting.TransmittingScreen
 import com.alfred.app.ui.transmitting.TransmittingViewModel
+import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 
 enum class Destination(val route: String, val label: String, val icon: ImageVector) {

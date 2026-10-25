@@ -942,3 +942,24 @@ def test_a_voice_turn_gets_the_specialists_connector_tools(harness: VoiceHarness
     assert turn.first("turn.metadata")["specialist"] == "media"
     tools = [t["function"]["name"] for t in harness.proxy.body(1)["tools"]]
     assert any(name.startswith("spotify_") for name in tools), tools
+
+
+def test_a_routine_phrase_runs_the_routine_and_speaks_its_reply(harness: VoiceHarness) -> None:
+    from tests.routine_helpers import movie_time
+
+    harness.routines.create(movie_time(reply="Enjoy the film."))
+    harness.hear("Movie time.")
+
+    with harness.connect() as ws:
+        hello(ws)
+        turn = speak(ws)
+
+    assert turn.text() == "Enjoy the film."
+    assert turn.said() == "Enjoy the film."
+    assert harness.proxy.requests == []  # no model at all
+    assert [c[0] for c in harness.ha.calls] == ["HassLightSet", "HassTurnOn"]
+    meta = turn.first("turn.metadata")
+    assert meta["specialist"] == "routine"
+    assert meta["routine"]["name"] == "movie time"
+    assert meta["timings"]["total_ms"] is not None
+    assert turn.types()[-2:] == ["turn.metadata", "reply.audio.end"]

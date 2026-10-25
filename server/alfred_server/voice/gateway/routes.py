@@ -19,10 +19,12 @@ from alfred_server.chat import (
     budget_dependency,
     confirmation_service_dependency,
     model_factory_dependency,
+    routine_service_dependency,
     tool_loader_dependency,
 )
 from alfred_server.config import Settings, get_settings
 from alfred_server.confirmations.service import ConfirmationService
+from alfred_server.routines.service import RoutineService
 from alfred_server.voice.gateway.connection import DeviceConnection
 from alfred_server.voice.gateway.hub import DeviceHub
 from alfred_server.voice.gateway.pipeline import VoiceServices
@@ -64,6 +66,7 @@ async def device_socket(
     budget: Annotated[ChatBudget, Depends(budget_dependency)],
     confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
     tools: Annotated[ToolLoader, Depends(tool_loader_dependency)],
+    routines: Annotated[RoutineService, Depends(routine_service_dependency)],
     stt: Annotated[SpeechToText | None, Depends(voice_stt_dependency)],
     tts: Annotated[LocalTTS | None, Depends(voice_tts_dependency)],
 ) -> None:
@@ -78,5 +81,6 @@ async def device_socket(
         tts=tts,
         # Personas (STU-66) will pick the voice per turn.
         voice=tts.default_voice if tts is not None else None,
+        routines=routines,
     )
     await DeviceConnection(websocket, services, hub).serve()

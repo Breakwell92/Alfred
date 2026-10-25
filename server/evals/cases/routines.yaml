@@ -1,0 +1,39 @@
+# Creating and managing routines with the `routines` specialist (alfred_server/agents/routines.py,
+# docs/decisions/0021-routines.md). Running a routine needs no model, so it isn't an eval: the
+# matcher and runner have unit tests. The specialist only gets read tools from other connectors,
+# so it must never act while creating one; `save_routine` pauses for the read-back.
+
+- id: routine-create-movie-time
+  input: When I say movie time, dim the lounge lights and turn on the TV.
+  tags: [smoke, routines, confirmation]
+  expected_specialist: routines
+  expected_tools: [{name: save_routine, args_contain: {name: movie}}]
+  must_not_call: [ha_turn_on, ha_set_light, ha_turn_off]
+  expect_confirmation: write
+  max_tier: local
+  notes: Acceptance criterion of STU-87. Pauses with every step read back.
+
+- id: routine-create-goodnight
+  input: Make a routine called goodnight that turns off all the lights downstairs.
+  tags: [routines, confirmation]
+  expected_specialist: routines
+  expected_tools: [{name: save_routine, args_contain: {name: goodnight}}]
+  must_not_call: [ha_turn_off]
+  expect_confirmation: write
+  max_tier: local
+
+- id: routine-list
+  input: What routines have I got?
+  tags: [routines]
+  expected_specialist: routines
+  expected_tools: [{name: list_routines}]
+  must_not_call: [save_routine, delete_routine]
+  max_tier: local
+
+- id: routine-delete
+  input: Delete the movie time routine.
+  tags: [routines, confirmation]
+  expected_specialist: routines
+  expected_tools: [{name: delete_routine, args_contain: {name: movie}}]
+  expect_confirmation: write
+  max_tier: local

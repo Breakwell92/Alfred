@@ -58,8 +58,9 @@ def test_undeclared_tools_are_irreversible() -> None:
 
 def test_gated_names() -> None:
     home_secure = ["ha_lock", "ha_unlock", "ha_open_door", "ha_close_door"]
-    assert policy().gated_names() == ["send_test_message", *home_secure]
-    assert policy(send_test_message="read").gated_names() == home_secure
+    routines = ["save_routine", "delete_routine"]
+    assert policy().gated_names() == ["send_test_message", *home_secure, *routines]
+    assert policy(send_test_message="read").gated_names() == [*home_secure, *routines]
 
 
 def test_highest() -> None:

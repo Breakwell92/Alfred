@@ -18,6 +18,7 @@ from alfred_server.connectors.api import router as connector_router
 from alfred_server.connectors.refresher import TokenRefresher
 from alfred_server.connectors.service import get_connector_service
 from alfred_server.devices.api import router as devices_router
+from alfred_server.routines.api import router as routines_router
 from alfred_server.ui.routes import router as ui_router
 from alfred_server.voice.gateway.hub import DeviceHub
 from alfred_server.voice.gateway.routes import router as device_socket_router
@@ -130,6 +131,9 @@ def create_app() -> FastAPI:
 
     # POST /devices/pair (also needs a one-time code from `python -m alfred_server.devices`).
     protected.include_router(devices_router)
+
+    # GET/POST /routines, GET/PUT/DELETE /routines/{id}, POST /routines/{id}/run.
+    protected.include_router(routines_router)
 
     # GET /connectors, PUT /connectors/{id}, DELETE /connectors/{id}/auth, GET .../auth/start.
     protected.include_router(connector_router)

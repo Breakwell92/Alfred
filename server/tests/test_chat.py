@@ -18,19 +18,24 @@ from alfred_server.chat import (
     budget_dependency,
     confirmation_service_dependency,
     model_factory_dependency,
+    routine_service_dependency,
     tool_loader_dependency,
 )
 from alfred_server.config import Settings
 from alfred_server.confirmations.service import ConfirmationService
 from alfred_server.confirmations.store import ConfirmationStore
+from alfred_server.connectors.builtin.routines import RoutinesTools
 from alfred_server.connectors.registry import default_registry
 from alfred_server.devices.api import device_service_dependency
 from alfred_server.devices.service import DeviceService
 from alfred_server.devices.store import DeviceStore
 from alfred_server.main import create_app
 from alfred_server.models.gateway import CallMetadata, ModelAlias, gateway_model
+from alfred_server.routines.service import RoutineService
+from alfred_server.routines.store import RoutineStore
 from tests.budget_helpers import memory_engine
 from tests.connector_helpers import Clock
+from tests.ha_fakes import FakeHomeAssistant
 from tests.llm_fakes import (
     FakeProxy,
     completion,
@@ -104,10 +109,22 @@ class ChatHarness:
         # Connector tools: a fake Spotify for the media specialist.
         self.spotify = FakeSpotify()
         self.app.dependency_overrides[tool_loader_dependency] = lambda: self._tools
+        # Routines (in memory), running their steps against a fake Home Assistant.
+        self.ha = FakeHomeAssistant()
+        self.routines = RoutineService(
+            RoutineStore(memory_engine()), self.confirmations.policy, self._tools
+        )
+        self.app.dependency_overrides[routine_service_dependency] = lambda: self.routines
         self.client = TestClient(self.app)
 
     async def _tools(self, specialist: str) -> list[Any]:
-        return [self.spotify.tools()] if specialist == "media" else []
+        if specialist == "media":
+            return [self.spotify.tools()]
+        if specialist == "home":
+            return [self.ha.tools()]
+        if specialist == "routines":
+            return [RoutinesTools(self.routines)]
+        return []
 
     def _model(self, alias: ModelAlias, metadata: CallMetadata, **kwargs: Any) -> Model:
         settings = Settings(_env_file=None, litellm_api_key="sk-test")
@@ -500,3 +517,98 @@ def test_a_media_request_controls_spotify_without_a_confirmation(harness: ChatHa
     assert body["confirmation"] is None
     play = harness.spotify.last("PUT", "/me/player/play")
     assert play.url.params["device_id"] == "dev-kitchen"
+
+
+# --- Routines -----------------------------------------------------------------------------------
+
+
+def save_movie_time(h: ChatHarness) -> None:
+    from tests.routine_helpers import movie_time
+
+    h.routines.create(movie_time(reply="Enjoy the film."))
+
+
+def test_a_routine_phrase_runs_the_routine_without_a_model(harness: ChatHarness) -> None:
+    save_movie_time(harness)
+    response = harness.post("/chat", text="Alfred, movie time")
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Enjoy the film."
+    assert harness.proxy.requests == []  # no classifier, no specialist
+    assert [c[0] for c in harness.ha.calls] == ["HassLightSet", "HassTurnOn"]
+
+
+def test_a_routine_on_the_stream_says_how_it_ran(harness: ChatHarness) -> None:
+    save_movie_time(harness)
+    response = harness.post("/chat/stream", text="movie time")
+    events = sse_events(response.text)
+    assert [e for e, _ in events] == ["token", "done"]
+    done = events[1][1]
+    assert done["reply"] == "Enjoy the film."
+    assert done["turn"]["specialist"] == "routine"
+    assert done["turn"]["tools"] == ["ha_set_light", "ha_turn_on"]
+    assert done["turn"]["routine"]["name"] == "movie time"
+    assert harness.proxy.requests == []
+
+
+def test_anything_else_is_still_routed(harness: ChatHarness) -> None:
+    save_movie_time(harness)
+    harness.reply_with(route_completion(), reply("It's a film night, then."))
+    response = harness.post("/chat", text="movie time tomorrow at 8")
+    assert response.json()["reply"] == "It's a film night, then."
+    assert harness.ha.calls == []
+
+
+def test_routine_storage_down_routes_as_usual(harness: ChatHarness) -> None:
+    save_movie_time(harness)
+
+    def broken() -> list[Any]:
+        raise RuntimeError("database down")
+
+    harness.routines.store.all = broken  # type: ignore[method-assign]
+    harness.reply_with(route_completion(), reply("Hello."))
+    assert harness.post("/chat", text="movie time").json()["reply"] == "Hello."
+
+
+def test_creating_a_routine_by_chat_reads_it_back_then_saves_it(harness: ChatHarness) -> None:
+    steps = [
+        {
+            "connector": "home_assistant",
+            "tool": "ha_set_light",
+            "args": {"area": "lounge", "brightness": 30},
+        },
+        {
+            "connector": "home_assistant",
+            "tool": "ha_turn_on",
+            "args": {"domain": "media_player", "name": "TV"},
+        },
+    ]
+    harness.reply_with(
+        route_completion(agent="routines"),
+        tool_call_completion(
+            "save_routine", {"name": "movie time", "phrases": ["movie time"], "steps": steps}
+        ),
+    )
+    asked = harness.post(
+        "/chat", text="When I say movie time, dim the lounge lights and turn on the TV"
+    ).json()
+    confirmation = asked["confirmation"]
+    assert confirmation["tier"] == "write"
+    assert confirmation["summary"] == (
+        "Save the routine 'movie time', run by saying 'movie time': set the lounge lights and "
+        "turn on media_player TV"
+    )
+    # The specialist couldn't act while creating: nothing ran, nothing was saved yet.
+    tools = {t["function"]["name"] for t in harness.proxy.body(1)["tools"]}
+    assert "save_routine" in tools and "ha_get_state" in tools
+    assert not {"ha_turn_on", "ha_set_light"} & tools
+    assert harness.ha.calls == [] and harness.routines.all() == []
+
+    harness.reply_with(reply("Done: say movie time to run it."))
+    answered = harness.post("/chat", text="yes", session_id=asked["session_id"]).json()
+    assert answered["reply"] == "Done: say movie time to run it."
+    assert [r.name for r in harness.routines.all()] == ["movie time"]
+
+    requests = len(harness.proxy.requests)
+    assert harness.post("/chat", text="movie time").json()["reply"] == "Movie time."
+    assert len(harness.proxy.requests) == requests  # no model this time
+    assert [c[0] for c in harness.ha.calls] == ["HassLightSet", "HassTurnOn"]

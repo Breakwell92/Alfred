@@ -28,7 +28,13 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 from mcp.types import CallToolResult, TextContent
 
 from alfred_server.config import get_settings
-from alfred_server.connectors.models import AgnoToolkitSource, Connector, Credentials, ToolMeta
+from alfred_server.connectors.models import (
+    AgnoToolkitSource,
+    Connector,
+    Credentials,
+    ToolError,
+    ToolMeta,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +196,7 @@ def describe_result(result: CallToolResult) -> str:
     """A short sentence about an intent call's result (HA's intent response as JSON)."""
     text = _text(result)
     if result.is_error:
-        return f"Home Assistant couldn't do that: {text[:300] or 'no reason given'}."
+        return ToolError(f"Home Assistant couldn't do that: {text[:300] or 'no reason given'}.")
     try:
         body = json.loads(text)
     except ValueError:
@@ -199,7 +205,7 @@ def describe_result(result: CallToolResult) -> str:
         return text[:MAX_RESULT_CHARS]
     speech = ((body.get("speech") or {}).get("plain") or {}).get("speech")
     if body.get("response_type") == "error":
-        return f"Home Assistant couldn't do that: {speech or 'no reason given'}."
+        return ToolError(f"Home Assistant couldn't do that: {speech or 'no reason given'}.")
     data = body.get("data") or {}
     done, failed = _names(data.get("success")), _names(data.get("failed"))
     parts = []
@@ -207,6 +213,8 @@ def describe_result(result: CallToolResult) -> str:
         parts.append("Done: " + ", ".join(done) + ".")
     if failed:
         parts.append("Failed: " + ", ".join(failed) + ".")
+    if failed:
+        return ToolError(" ".join(parts))
     if parts:
         return " ".join(parts)
     return str(speech) if speech else "Done."
@@ -238,11 +246,11 @@ class HomeAssistantTools(Toolkit):
 
     async def _intent(self, tool: str, arguments: dict[str, Any]) -> str:
         if self.client is None:
-            return NOT_CONFIGURED
+            return ToolError(NOT_CONFIGURED)
         try:
             return describe_result(await self.client.call(tool, arguments))
         except HomeAssistantError as e:
-            return e.message
+            return ToolError(e.message)
 
     async def _switch(
         self,
@@ -254,20 +262,20 @@ class HomeAssistantTools(Toolkit):
         device_class: str | None,
     ) -> str:
         if domain in SECURITY_HINT:
-            return SECURITY_HINT[domain]
+            return ToolError(SECURITY_HINT[domain])
         if domain not in SAFE_DOMAINS:
-            return f"I can't control {domain} devices."
+            return ToolError(f"I can't control {domain} devices.")
         args = _targets(name, area, floor)
         if not args:
-            return "Which device or room?"
+            return ToolError("Which device or room?")
         if domain in RELAY_DOMAINS and any(names_secure_device(v) for v in args.values()):
-            return RELAY_HINT
+            return ToolError(RELAY_HINT)
         args["domain"] = [domain]
         if domain == "cover":
             if device_class in SECURE_COVER_CLASSES:
-                return DOOR_HINT
+                return ToolError(DOOR_HINT)
             if device_class is not None and device_class not in SAFE_COVER_CLASSES:
-                return f"I can't control {device_class} covers."
+                return ToolError(f"I can't control {device_class} covers.")
             # HA matches only covers of these classes: never a garage door by its name.
             args["device_class"] = [device_class] if device_class else list(SAFE_COVER_CLASSES)
         return await self._intent(intent, args)
@@ -280,14 +288,14 @@ class HomeAssistantTools(Toolkit):
             An overview of the home's devices and their states.
         """
         if self.client is None:
-            return NOT_CONFIGURED
+            return ToolError(NOT_CONFIGURED)
         try:
             result = await self.client.call("GetLiveContext", {})
         except HomeAssistantError as e:
-            return e.message
+            return ToolError(e.message)
         text = _text(result)
         if result.is_error:
-            return f"Home Assistant couldn't read the devices: {text[:300]}."
+            return ToolError(f"Home Assistant couldn't read the devices: {text[:300]}.")
         try:
             body = json.loads(text)
             if isinstance(body, dict) and isinstance(body.get("result"), str):
@@ -370,9 +378,9 @@ class HomeAssistantTools(Toolkit):
         """
         args = _targets(name, area, floor)
         if not args:
-            return "Which lights?"
+            return ToolError("Which lights?")
         if brightness is None and not color:
-            return "What brightness or colour?"
+            return ToolError("What brightness or colour?")
         if brightness is not None:
             args["brightness"] = max(0, min(100, int(brightness)))
         if color:
@@ -394,7 +402,7 @@ class HomeAssistantTools(Toolkit):
         """
         temperature = float(temperature)
         if not MIN_TEMPERATURE_C <= temperature <= MAX_TEMPERATURE_C:
-            return (
+            return ToolError(
                 f"{temperature:g} degrees is outside what I'll set "
                 f"({MIN_TEMPERATURE_C:g} to {MAX_TEMPERATURE_C:g})."
             )

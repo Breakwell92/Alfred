@@ -172,7 +172,11 @@ def test_stale_or_future_approvals_fail(devices: DeviceService, clock: Clock) ->
         devices.verify_approval(signed, "c1", approve=True)
 
 
-@pytest.mark.parametrize("issued_at", [10**20, -(10**20), 2**63], ids=["huge", "negative", "int64"])
+@pytest.mark.parametrize(
+    "issued_at",
+    [10**20, -(10**20), 2**63, 10**400, -(10**400)],
+    ids=["huge", "negative", "int64", "beyond-float", "beyond-float-negative"],
+)
 def test_out_of_range_timestamps_fail_cleanly(
     devices: DeviceService, clock: Clock, issued_at: int
 ) -> None:

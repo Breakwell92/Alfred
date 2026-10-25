@@ -125,8 +125,10 @@ class DeviceService:
         if device is None or device.revoked_at is not None:
             raise ApprovalProofError("Unknown or revoked device")
         now = self.clock()
-        # Compared as Unix seconds: building a datetime from an untrusted int can overflow.
-        if abs(now.timestamp() - proof.issued_at) > APPROVAL_MAX_AGE.total_seconds():
+        # Compared as whole Unix seconds in ints: a datetime or float built from an untrusted
+        # int can overflow (e.g. 10**400), which must be a 403, not a 503.
+        age = abs(int(now.timestamp()) - proof.issued_at)
+        if age > int(APPROVAL_MAX_AGE.total_seconds()):
             raise ApprovalProofError("The approval is too old (or the phone's clock is wrong)")
         try:
             signature = base64.b64decode(proof.signature, validate=True)

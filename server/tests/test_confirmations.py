@@ -292,12 +292,13 @@ def test_a_proof_for_another_answer_is_rejected(harness: ChatHarness) -> None:
     assert_not_approved(harness)
 
 
-def test_an_out_of_range_timestamp_is_403_not_503(harness: ChatHarness) -> None:
+@pytest.mark.parametrize("issued_at", [10**20, 10**400, -(10**400)])
+def test_an_out_of_range_timestamp_is_403_not_503(harness: ChatHarness, issued_at: int) -> None:
     c = irreversible_pending(harness)
     app = FakeApp()
     app.pair(harness.devices)
     proof = app.proof(c["id"], at=harness.clock())
-    proof["issued_at"] = 10**20
+    proof["issued_at"] = issued_at
 
     response = answer(harness, c["id"], approve=True, channel="app_ui", proof=proof)
 

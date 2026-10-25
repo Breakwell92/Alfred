@@ -87,9 +87,9 @@ def get_registry() -> SpecialistRegistry:
     registry.register(
         Specialist(
             HOME_AGENT_NAME,
-            "smart home devices: switch lights or set their brightness, set the heating "
-            "temperature, blinds, lighting scenes, door locks, garage door, and whether a "
-            "device is on or locked (Home Assistant)",
+            # Kept short: `local-router` is sensitive to this wording. Longer versions sent
+            # trips and dinner music here; run the full eval set after changing it.
+            "lights, heating, blinds, door locks, garage door (Home Assistant)",
             _home_factory,
             uses_connectors=True,
         )

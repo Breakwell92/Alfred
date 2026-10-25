@@ -41,7 +41,7 @@ HA's MCP tools are its generic Assist intents. `HassTurnOn` and `HassTurnOff` sw
 - locks and garage doors always go to their own tools, which wait for the app
 - replies are one spoken sentence
 
-Its classifier description names devices ("smart home devices: switch lights…"), not "the home". An earlier wording sent "plan a walking trip" and "something relaxing for dinner" to it.
+Its classifier description is deliberately short: "lights, heating, blinds, door locks, garage door (Home Assistant)". With the 4B `local-router`, longer wording (scenes, states, "the home") pulled "plan a walking trip" and "something relaxing for dinner" to `home`, and even a comma changed which refusal requests it rated `complex`. Scenes still route here ("activate movie time"). Run the full eval set after changing it.
 
 **Evals.** `cases/home.yaml` holds 13 cases, 5 of them in the smoke set. A new case field, `expect_confirmation: write|irreversible`, scores that a run paused with that tier (the `confirm` column), so "lock the front door" is checked to pause for an `irreversible` approval.
 

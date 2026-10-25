@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- STU-113: the orb with fake speech levels. Debug builds only; started over adb. -->
+        <activity
+            android:name=".debug.OrbDebugActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Alfred" />
+    </application>
+
+</manifest>

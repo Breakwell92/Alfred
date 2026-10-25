@@ -65,6 +65,16 @@ class AudioLevelTest {
         assertEquals(0L, presentedFrame(0, 5_000_000_000, 4_900_000_000, 24_000))
     }
 
+    @Test
+    fun `heard position never runs past the audio written`() {
+        assertEquals(500L, heardMillis(12_000, framesWritten = 48_000, sampleRate = 24_000))
+        // Underrun: the timestamp is 1 s stale, so the extrapolation says 36 000 frames, but
+        // only 24 000 have been written.
+        val stale = presentedFrame(12_000, 5_000_000_000, 6_000_000_000, 24_000)
+        assertEquals(1_000L, heardMillis(stale, framesWritten = 24_000, sampleRate = 24_000))
+        assertEquals(0L, heardMillis(-5, framesWritten = 0, sampleRate = 24_000))
+    }
+
     /** One 20 ms frame of a sine (500 Hz is a whole number of cycles in it). */
     private fun sine(peak: Double, hz: Double = 500.0): ByteArray {
         val samples = IntArray(FRAME_BYTES / 2) { i ->

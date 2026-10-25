@@ -101,6 +101,9 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
 
     /** Reused by every poll; only the poller thread touches it. */
     private val timestamp = AudioTimestamp()
+
+    /** PCM written to the track for this reply; the poller caps the heard position at it. */
+    @Volatile
     private var bytesWritten = 0L
     private var bytesPerSecond = OUTPUT_SAMPLE_RATE * 2
 
@@ -198,7 +201,7 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         val current = track
         val heard = if (current != null && started) current.runCatching(::heardFrame).getOrNull() else null
         _level.value = heard?.let(levels::levelAt) ?: 0f
-        _position.value = heard?.let { (it.coerceAtLeast(0) * 1000) / sampleRate } ?: 0L
+        _position.value = heard?.let { heardMillis(it, bytesWritten / 2, sampleRate) } ?: 0L
     }
 
     /**
@@ -245,8 +248,9 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
             val written = current.write(pcm, offset, pcm.size - offset)
             if (written <= 0) return
             offset += written
+            // Per piece, so the position cap (read by the poller) follows a blocking write.
+            bytesWritten += written
         }
-        bytesWritten += offset
     }
 
     /** Waits until everything written has been played (or the reply was stopped). */

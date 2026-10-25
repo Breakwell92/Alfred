@@ -11,6 +11,9 @@ import android.os.Build
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +23,13 @@ import kotlinx.coroutines.flow.asStateFlow
 interface AudioPlayer {
     /** True from [begin] until the audio has played out or [stop] is called. */
     val playing: StateFlow<Boolean>
+
+    /**
+     * Loudness of the reply as it's heard, 0 to 1 (see [pcm16Level]), updated every 20 ms while
+     * playing; 0 otherwise. Follows the playback position, so it lags [write] by the track's
+     * buffer and moves with the sound.
+     */
+    val level: StateFlow<Float>
 
     /** Starts a new reply (stopping any current one). PCM16 mono at [sampleRate]. */
     fun begin(sampleRate: Int)
@@ -37,7 +47,8 @@ interface AudioPlayer {
  * [AudioPlayer] on a streaming [AudioTrack]. All track work runs on one background thread, so
  * blocking writes never hold up the socket or the UI. Playback starts once [JITTER_MILLIS] of
  * audio is buffered (or on [finish]), which smooths out network jitter between frames. Other
- * audio is ducked while Alfred speaks, and a connected Bluetooth output is preferred.
+ * audio is ducked while Alfred speaks, and a connected Bluetooth output is preferred. [level] is
+ * polled on its own thread from the track's playback head.
  */
 class AudioTrackPlayer(context: Context) : AudioPlayer {
 
@@ -49,16 +60,31 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
     /** Bumped by [begin] and [stop]; queued work for an older reply is skipped. */
     private val generation = AtomicInteger()
 
+    private val poller: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "alfred-audio-level").apply { isDaemon = true }
+    }
+
     private val _playing = MutableStateFlow(false)
     override val playing: StateFlow<Boolean> = _playing.asStateFlow()
 
+    private val _level = MutableStateFlow(0f)
+    override val level: StateFlow<Float> = _level.asStateFlow()
+
     // Touched only on the executor thread, except [track], which [stop] pauses directly to
-    // unblock a pending write.
+    // unblock a pending write, and the volatile ones the level poller reads.
     @Volatile
     private var track: AudioTrack? = null
     private var focus: AudioFocusRequest? = null
     private val pending = ByteArrayOutputStream()
+
+    @Volatile
     private var started = false
+
+    @Volatile
+    private var levels = PlaybackLevels(OUTPUT_SAMPLE_RATE * LEVEL_WINDOW_MILLIS / 1000)
+
+    @Volatile
+    private var levelPoll: ScheduledFuture<*>? = null
     private var bytesWritten = 0L
     private var bytesPerSecond = OUTPUT_SAMPLE_RATE * 2
 
@@ -104,6 +130,7 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
             pause()
             flush()
         }
+        stopLevels()
         _playing.value = false
         executor.execute { release() }
     }
@@ -140,6 +167,33 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         pending.reset()
         started = false
         bytesWritten = 0
+        levels = PlaybackLevels(sampleRate * LEVEL_WINDOW_MILLIS / 1000)
+        levelPoll = poller.scheduleWithFixedDelay(
+            ::pollLevel,
+            0,
+            LEVEL_WINDOW_MILLIS.toLong(),
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    /** Publishes the level of the audio at the playback head (0 until playback starts). */
+    private fun pollLevel() {
+        val current = track
+        val played = if (current != null && started) {
+            current.runCatching { playbackHeadPosition.toLong() and 0xFFFFFFFFL }.getOrNull()
+        } else {
+            null
+        }
+        _level.value = played?.let(levels::levelAt) ?: 0f
+    }
+
+    private fun stopLevels() {
+        levelPoll?.cancel(false)
+        levelPoll = null
+        _level.value = 0f
+        // A poll already running when cancelled could publish after the line above; this runs
+        // behind it on the same thread.
+        poller.execute { if (levelPoll == null) _level.value = 0f }
     }
 
     private fun startPlaying(gen: Int) {
@@ -153,6 +207,7 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
 
     private fun writeFully(pcm: ByteArray, gen: Int) {
         val current = track ?: return
+        levels.add(pcm)
         var offset = 0
         while (offset < pcm.size && gen == generation.get()) {
             val written = current.write(pcm, offset, pcm.size - offset)
@@ -175,6 +230,7 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
     }
 
     private fun release() {
+        stopLevels()
         track?.runCatching {
             stop()
             release()
@@ -200,6 +256,7 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
 
     private companion object {
         const val JITTER_MILLIS = 150
+        const val LEVEL_WINDOW_MILLIS = 20
         const val DRAIN_POLL_MILLIS = 20L
         const val DRAIN_SLACK_MILLIS = 1_000L
     }

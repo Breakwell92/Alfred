@@ -39,7 +39,7 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 
 | Type | Fields | Notes |
 | --- | --- | --- |
-| `hello` | `protocol` (1), `device_id`, `device_type` (`"phone"`), `app_version`?, `capabilities`? (strings), `token`?, `session_id`? | First frame. Answered by `hello.ok`. |
+| `hello` | `protocol` (1), `device_id`, `device_type` (`"phone"`), `app_version`?, `capabilities`? (strings), `token`?, `session_id`?, `health`? `{listening_since?, restarts, reconnects, last_restart_at?, last_gap_s?}` | First frame. Answered by `hello.ok`. `health` is how the phone's wake word service has been doing ([ADR 0025](decisions/0025-background-reliability.md)): times in epoch seconds, counts since install. The server logs it on connect. |
 | `ping` | `t`? (number) | Answered by `pong` with the same `t`. |
 | `turn.start` | `turn_id`, `sample_rate` (16000), `persona_id`?, `context`? `{active_room?, location?}` | Opens a turn. Audio frames follow. One turn at a time. |
 | `turn.end` | `turn_id` | End of speech: the server transcribes and answers. |

@@ -244,6 +244,59 @@ class OkHttpDeviceConnectionTest {
     }
 
     @Test
+    fun `backs off to a minute`() {
+        assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 32_000L, 60_000L, 60_000L), (0..7).map(::defaultRetryDelay))
+    }
+
+    /** A connection that would wait a minute between attempts, and reports some health. */
+    private fun slowConnection() = OkHttpDeviceConnection(
+        client = OkHttpClient(),
+        settingsRepository = settings,
+        deviceIds = { "device-1" },
+        appVersion = "test",
+        scope = scope,
+        retryDelay = { 60_000L },
+        pingIntervalMillis = 100L,
+        helloTimeoutMillis = 2_000L,
+        healthProvider = { DeviceHealth(restarts = 3, reconnects = 7) },
+    )
+
+    @Test
+    fun `hello carries the health`() = runBlocking<Unit> {
+        val side = upgrade()
+        val slow = slowConnection()
+        try {
+            slow.start()
+            side.opened.receive()
+            val hello = JSONObject(withTimeout(5_000) { side.received.receive() })
+            val health = hello.getJSONObject("health")
+            assertEquals(3, health.getInt("restarts"))
+            assertEquals(7, health.getInt("reconnects"))
+        } finally {
+            slow.stop()
+        }
+    }
+
+    @Test
+    fun `a network coming back skips the backoff`() = runBlocking<Unit> {
+        val first = upgrade()
+        val slow = slowConnection()
+        try {
+            slow.start()
+            first.handshake().close(1000, "bye")
+            withTimeout(5_000) { slow.state.first { it is LinkState.Waiting } }
+            val second = upgrade()
+
+            slow.networkAvailable()
+
+            withTimeout(5_000) { second.handshake() }
+            withTimeout(5_000) { slow.state.first { it is LinkState.Connected } }
+        } finally {
+            slow.stop()
+        }
+    }
+
+    @Test
     fun `not configured without a token`() = runBlocking<Unit> {
         settings.save(AppSettings(server.url("/").toString(), ""))
         connection.start()

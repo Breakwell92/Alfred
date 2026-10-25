@@ -168,6 +168,12 @@ class FakeDeviceConnection(
         reconnects++
     }
 
+    var networkSignals = 0
+
+    override fun networkAvailable() {
+        networkSignals++
+    }
+
     override fun send(message: ClientMessage): Boolean {
         if (state.value !is LinkState.Connected) return false
         sent += message

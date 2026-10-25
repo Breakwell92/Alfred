@@ -24,6 +24,7 @@ from alfred_server.voice.gateway.protocol import (
     INPUT_SAMPLE_RATE,
     PROTOCOL_VERSION,
     ConfirmReply,
+    DeviceHealth,
     Hello,
     Ping,
     ProtocolError,
@@ -67,6 +68,8 @@ class DeviceConnection:
         self.hub = hub
         self.device_id: str | None = None
         self.session_id: str | None = None
+        # What the device reported in `hello` (ADR 0025), for whoever looks it up in the hub.
+        self.health: DeviceHealth | None = None
         self._turn: _OpenTurn | None = None
         self._send_lock = asyncio.Lock()
         self._closed = False
@@ -78,8 +81,10 @@ class DeviceConnection:
             return
         self.device_id = hello.device_id
         self.session_id = self.hub.session_for(hello.device_id, hello.session_id)
+        self.health = hello.health
         await self.hub.register(hello.device_id, self)
-        logger.info("device %s connected (app %s)", hello.device_id, hello.app_version)
+        health = f"; {hello.health.describe()}" if hello.health else ""
+        logger.info("device %s connected (app %s%s)", hello.device_id, hello.app_version, health)
         try:
             await self.send_json(
                 message(

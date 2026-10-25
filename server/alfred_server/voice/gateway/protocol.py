@@ -47,6 +47,22 @@ class _Message(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class DeviceHealth(_Message):
+    """How the phone's wake word service has been doing (ADR 0025). Times are epoch seconds."""
+
+    listening_since: float | None = Field(default=None, ge=0)
+    # Restarts after Android killed the service, and socket reconnects, since the app was installed.
+    restarts: int = Field(default=0, ge=0)
+    reconnects: int = Field(default=0, ge=0)
+    last_restart_at: float | None = Field(default=None, ge=0)
+    # How long the last restart was without the service, at most a minute over the real gap.
+    last_gap_s: float | None = Field(default=None, ge=0)
+
+    def describe(self) -> str:
+        gap = f", last gap {self.last_gap_s:.0f} s" if self.last_gap_s is not None else ""
+        return f"restarts {self.restarts}, reconnects {self.reconnects}{gap}"
+
+
 class Hello(_Message):
     """First message on a connection: who the device is, and the token if not in a header."""
 
@@ -62,6 +78,7 @@ class Hello(_Message):
     token: str | None = Field(default=None, max_length=512)
     # Continue this conversation instead of the device's current one.
     session_id: str | None = Field(default=None, max_length=128, pattern=ID_PATTERN)
+    health: DeviceHealth | None = None
 
 
 class Ping(_Message):

@@ -4,6 +4,16 @@ import com.alfred.app.BuildConfig
 import com.alfred.app.data.device.AndroidKeyStoreDeviceKeys
 import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.device.DeviceKeys
+import com.alfred.app.data.reliability.AndroidNetworkMonitor
+import com.alfred.app.data.reliability.AndroidServiceStarter
+import com.alfred.app.data.reliability.DataStoreHealthRepository
+import com.alfred.app.data.reliability.FileReliabilityLog
+import com.alfred.app.data.reliability.HealthRepository
+import com.alfred.app.data.reliability.NetworkMonitor
+import com.alfred.app.data.reliability.ReliabilityLog
+import com.alfred.app.data.reliability.ReliabilityMonitor
+import com.alfred.app.data.reliability.ReliabilityRecorder
+import com.alfred.app.data.reliability.ServiceStarter
 import com.alfred.app.data.server.OkHttpServerClient
 import com.alfred.app.data.server.ServerClient
 import com.alfred.app.data.settings.DataStoreProfileSettingsRepository
@@ -38,6 +48,7 @@ import com.alfred.app.data.wakeword.WakeFeedback
 import com.alfred.app.data.wakeword.WakeSignals
 import com.alfred.app.data.wakeword.WakeWordController
 import com.alfred.app.data.wakeword.WakeWordSettingsRepository
+import com.alfred.app.service.WakeWordService
 import com.alfred.app.ui.home.HomeViewModel
 import com.alfred.app.ui.home.VoiceViewModel
 import com.alfred.app.ui.recording.RecordingViewModel
@@ -50,6 +61,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import okhttp3.OkHttpClient
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
@@ -74,8 +86,23 @@ val appModule = module {
     // Lives as long as the app: the voice connection and turns outlive any one screen.
     single(named(APP_SCOPE)) { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
     single<DeviceIdRepository> { DataStoreDeviceIdRepository(androidContext().settingsDataStore) }
+    // Background reliability (ADR 0025).
+    single<HealthRepository> { DataStoreHealthRepository(androidContext().settingsDataStore) }
+    single<ReliabilityLog> { FileReliabilityLog(File(androidContext().filesDir, "reliability_events.jsonl")) }
+    single { ReliabilityRecorder(get(), get()) }
+    single<ServiceStarter> { AndroidServiceStarter(androidContext(), get()) }
+    single<NetworkMonitor> { AndroidNetworkMonitor(androidContext()) }
+    single { ReliabilityMonitor(get(), get(), get(), get(named(APP_SCOPE))) }
     single<DeviceConnection> {
-        OkHttpDeviceConnection(get(), get(), get(), BuildConfig.VERSION_NAME, get(named(APP_SCOPE)))
+        val health = get<HealthRepository>()
+        OkHttpDeviceConnection(
+            client = get(),
+            settingsRepository = get(),
+            deviceIds = get(),
+            appVersion = BuildConfig.VERSION_NAME,
+            scope = get(named(APP_SCOPE)),
+            healthProvider = { health.health.first().toDeviceHealth(WakeWordService.isRunning) },
+        )
     }
     single<AudioCapture> { AudioRecordCapture(androidContext()) }
     single { LinkHolds(get()) }
@@ -120,7 +147,7 @@ val appModule = module {
             scope = get(named(APP_SCOPE)),
         )
     }
-    viewModel { WakeWordSettingsViewModel(get(), get(), get()) }
+    viewModel { WakeWordSettingsViewModel(get(), get(), get(), get()) }
     viewModel { VadSettingsViewModel(get(), get(), get()) }
     viewModel { VoiceViewModel(get(), get(), get<EndOfSpeechFactory>()::pushToTalk) }
     viewModel { RecordingViewModel(get()) }

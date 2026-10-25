@@ -39,6 +39,25 @@ fun newTurnId(): String = "t-" + UUID.randomUUID().toString().replace("-", "").t
 
 fun isValidTurnId(id: String): Boolean = TURN_ID.matches(id)
 
+/**
+ * How the wake word service has been doing (ADR 0025), sent in `hello.health`. Times are epoch
+ * milliseconds here and epoch seconds on the wire.
+ */
+data class DeviceHealth(
+    val listeningSinceMillis: Long? = null,
+    val restarts: Int = 0,
+    val reconnects: Int = 0,
+    val lastRestartAtMillis: Long? = null,
+    val lastGapMillis: Long? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .putOpt("listening_since", listeningSinceMillis?.let { it / 1_000.0 })
+        .put("restarts", restarts)
+        .put("reconnects", reconnects)
+        .putOpt("last_restart_at", lastRestartAtMillis?.let { it / 1_000.0 })
+        .putOpt("last_gap_s", lastGapMillis?.let { it / 1_000.0 })
+}
+
 /** Client → server control messages. */
 sealed interface ClientMessage {
     fun toJson(): JSONObject
@@ -51,6 +70,7 @@ sealed interface ClientMessage {
         val capabilities: List<String> = emptyList(),
         val token: String? = null,
         val sessionId: String? = null,
+        val health: DeviceHealth? = null,
     ) : ClientMessage {
         override fun toJson(): JSONObject = message("hello")
             .put("protocol", PROTOCOL_VERSION)
@@ -60,6 +80,7 @@ sealed interface ClientMessage {
             .apply { if (capabilities.isNotEmpty()) put("capabilities", JSONArray(capabilities)) }
             .putOpt("token", token)
             .putOpt("session_id", sessionId)
+            .putOpt("health", health?.toJson())
 
         // Never log the token.
         override fun toString(): String =

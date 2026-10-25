@@ -39,6 +39,7 @@ from alfred_server.voice.gateway.pipeline import VoiceServices, VoiceTurn
 from alfred_server.voice.gateway.protocol import (
     TURN_ID_PATTERN,
     ConfirmReply,
+    Hello,
     ProtocolError,
     TurnStart,
     audio_frame,
@@ -804,6 +805,43 @@ def test_turn_ids_and_context_are_validated() -> None:
     ):
         with pytest.raises(ProtocolError):
             parse_message(bad)
+
+
+def test_hello_may_carry_device_health() -> None:
+    plain = parse_message(json.dumps(HELLO))
+    assert isinstance(plain, Hello)
+    assert plain.health is None
+
+    reported = parse_message(
+        json.dumps(
+            {
+                **HELLO,
+                "health": {
+                    "listening_since": 1_700_000_000.5,
+                    "restarts": 2,
+                    "reconnects": 5,
+                    "last_gap_s": 720,
+                    "battery": "newer field",
+                },
+            }
+        )
+    )
+    assert isinstance(reported, Hello)
+    assert reported.health is not None
+    assert reported.health.restarts == 2
+    assert reported.health.describe() == "restarts 2, reconnects 5, last gap 720 s"
+
+    with pytest.raises(ProtocolError):
+        parse_message(json.dumps({**HELLO, "health": {"restarts": -1}}))
+
+
+def test_connect_log_includes_health(
+    harness: VoiceHarness, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger="alfred_server.voice.gateway.connection")
+    with harness.connect() as ws:
+        hello(ws, health={"restarts": 1, "reconnects": 3, "last_gap_s": 90})
+    assert "restarts 1, reconnects 3, last gap 90 s" in caplog.text
 
 
 def test_errors_never_echo_the_token() -> None:

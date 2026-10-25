@@ -72,6 +72,8 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
+    // The wake word watchdog (ADR 0025).
+    implementation(libs.androidx.work.runtime)
     // openWakeWord models (ADR 0019).
     implementation(libs.onnxruntime.android)
 

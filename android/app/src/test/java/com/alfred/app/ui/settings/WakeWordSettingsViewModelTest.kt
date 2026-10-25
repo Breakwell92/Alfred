@@ -5,6 +5,7 @@ import com.alfred.app.data.wakeword.WakeCounts
 import com.alfred.app.data.wakeword.WakeWordController
 import com.alfred.app.data.wakeword.WakeWordSettings
 import com.alfred.app.testing.FakeAudioCapture
+import com.alfred.app.testing.FakeHealthRepository
 import com.alfred.app.testing.FakeWakeEventLog
 import com.alfred.app.testing.FakeWakeFeedback
 import com.alfred.app.testing.FakeWakeSignals
@@ -35,6 +36,7 @@ class WakeWordSettingsViewModelTest {
 
     private val repository = FakeWakeWordSettingsRepository(WakeWordSettings())
     private val events = FakeWakeEventLog()
+    private val health = FakeHealthRepository()
 
     private fun TestScope.viewModel(): WakeWordSettingsViewModel {
         val capture = FakeAudioCapture()
@@ -54,7 +56,7 @@ class WakeWordSettingsViewModelTest {
             workDispatcher = mainDispatcher.dispatcher,
         )
         controller.start()
-        return WakeWordSettingsViewModel(repository, controller, events).also {
+        return WakeWordSettingsViewModel(repository, controller, events, health).also {
             it.state.launchIn(backgroundScope)
         }
     }

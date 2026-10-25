@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#1B2A41</color>
+    <!-- Window background before Compose draws; matches AlfredColors.background (ui/theme/Color.kt). -->
+    <color name="alfred_background">#07080A</color>
 </resources>

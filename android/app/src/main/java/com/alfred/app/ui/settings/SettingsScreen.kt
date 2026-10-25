@@ -22,6 +22,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alfred.app.ui.components.GridBackground
 import com.alfred.app.ui.theme.AlfredTheme
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -117,17 +118,19 @@ fun SettingsContent(
     }
 }
 
-@Preview(showBackground = true)
+@Preview
 @Composable
 private fun SettingsContentPreview() {
     AlfredTheme {
-        SettingsContent(
-            state = SettingsUiState(serverUrl = "http://glados:8000", apiToken = "x", loaded = true),
-            onServerUrlChange = {},
-            onApiTokenChange = {},
-            onSave = {},
-            onPairingCodeChange = {},
-            onPair = {},
-        )
+        GridBackground {
+            SettingsContent(
+                state = SettingsUiState(serverUrl = "http://glados:8000", apiToken = "x", loaded = true),
+                onServerUrlChange = {},
+                onApiTokenChange = {},
+                onSave = {},
+                onPairingCodeChange = {},
+                onPair = {},
+            )
+        }
     }
 }

@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Protocol
 
@@ -50,6 +50,7 @@ from alfred_server.confirmations.service import (
     APP_ONLY_REPLY,
     ConfirmationService,
     ConfirmationsUnavailableError,
+    YesNo,
     cancel_paused_run,
     denied_reply,
     get_confirmation_service,
@@ -159,9 +160,12 @@ async def answer_pending(
     ctx: RequestContext,
     confirmations: ConfirmationService,
     agent_router: Router,
+    parse: Callable[[str], Awaitable[YesNo | None]] | None = None,
 ) -> Answered | None:
     """Answer this session's pending confirmation with `text`, or None to route it as usual.
 
+    `text` is a yes or no if `parse_yes_no` says so, else if `parse` (e.g. the voice gateway's
+    model-based check, for "yeah go on then") does. It's only called when one is pending.
     Raises `ConfirmationsUnavailableError` if the confirmations can't be read and
     `AgentRunError` if an approved run fails to continue.
     """
@@ -171,6 +175,8 @@ async def answer_pending(
     if not pending:
         return None
     answer = parse_yes_no(text)
+    if answer is None and parse is not None:
+        answer = await parse(text)
     if answer is None:
         # The user moved on: a later "yes" mustn't approve something they've stopped
         # thinking about. Irreversible ones wait for the app (or expiry).
@@ -309,7 +315,7 @@ async def _answered_events(
         run = answered.routed.run
         tools = tuple(t.tool_name for t in run.tools or [] if t.tool_name)
         done = Done(answered.reply, answered.routed.route, tools, run.metrics)
-        turn = await _turn_info(done, budget)
+        turn = await turn_info(done, budget)
     yield _sse(
         "done",
         {
@@ -331,7 +337,7 @@ async def _sse_events(
             if isinstance(item, Token):
                 yield _sse("token", {"text": item.text})
             elif isinstance(item, Done):
-                turn = await _turn_info(item, budget)
+                turn = await turn_info(item, budget)
                 yield _sse(
                     "done",
                     {
@@ -348,8 +354,9 @@ async def _sse_events(
         yield failed
 
 
-async def _turn_info(done: Done, budget: ChatBudget) -> dict[str, Any]:
-    """How the turn ran, for the web chat: the routing decision, tool calls and cost.
+async def turn_info(done: Done, budget: ChatBudget) -> dict[str, Any]:
+    """How the turn ran, for the web chat and the voice gateway's `turn.metadata`: the routing
+    decision, tool calls and cost.
 
     Cost is `None` on local models, and on cloud when it can't be priced. It's the proxy's
     price for the run's tokens, so close to (not exactly) what LiteLLM records as spend.

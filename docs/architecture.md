@@ -13,7 +13,7 @@ Alfred is a personal, wake-word-activated Android voice assistant. Personal use 
   - a scheduler for timed and event-triggered tasks
 - **Cloud LLMs** (Claude, GPT, Gemini) are used only when enabled, under budget, and needed. The budget service (`alfred_server/budget/`, ADR 0008) answers "may this call use cloud alias X?" from Dan's monthly cap and LiteLLM's spend logs; cloud is off until enabled with `PUT /settings/budget`.
 
-The client and server talk over a WebSocket (see `docs/protocol.md` once it exists), reached over Tailscale (no exposed ports).
+The client and server talk over one WebSocket per device, `GET /ws/device` (`docs/protocol.md`, ADR 0014), reached over Tailscale (no exposed ports). A voice turn streams 16 kHz audio up; the server transcribes it, runs it through the router (streaming) and speaks the reply back as tagged 24 kHz audio, starting on the first sentence. Confirmations for `write` tools can be answered by voice. Device tools and pushes will use the same socket.
 
 **Auth:** the app sends a shared bearer token (`ALFRED_API_TOKEN`) on every request; the server requires it on every route except `GET /health` and the OAuth callback `GET /connectors/{id}/auth/callback` (guarded by a one-time state instead, ADR 0010) and the web chat page's static files (ADR 0011), and refuses everything (503) when no token is configured. The app shows connection status by polling `/health` and the authenticated `/me`. See `docs/decisions/0004-android-client-stack.md`.
 

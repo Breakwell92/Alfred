@@ -66,4 +66,6 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    // A real org.json for JVM tests (android.jar's is a stub that throws).
+    testImplementation(libs.json)
 }

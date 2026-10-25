@@ -110,6 +110,8 @@ class HomeViewModelTest {
             }
 
             override suspend fun save(settings: AppSettings) = Unit
+
+            override suspend fun savePairing(deviceId: String, name: String) = Unit
         }
         val vm = HomeViewModel(flaky, server, pollIntervalMillis = 10_000)
         backgroundScope.launch { vm.status.collect {} }
@@ -131,6 +133,8 @@ class HomeViewModelTest {
             }
 
             override suspend fun save(settings: AppSettings) = Unit
+
+            override suspend fun savePairing(deviceId: String, name: String) = Unit
         }
         val vm = HomeViewModel(flaky, server, pollIntervalMillis = 10_000)
         backgroundScope.launch { vm.status.collect {} }

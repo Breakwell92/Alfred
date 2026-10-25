@@ -9,10 +9,15 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** Where the server is and the shared bearer token (`ALFRED_API_TOKEN` on the server). */
+/**
+ * Where the server is, the shared bearer token (`ALFRED_API_TOKEN` on the server), and the
+ * device id the server gave this app when it was paired for approvals (null if not paired).
+ */
 data class AppSettings(
     val serverUrl: String,
     val apiToken: String,
+    val pairedDeviceId: String? = null,
+    val pairedDeviceName: String? = null,
 )
 
 /**
@@ -25,7 +30,10 @@ fun isValidApiToken(token: String): Boolean =
 interface SettingsRepository {
     val settings: Flow<AppSettings>
 
+    /** Saves the server URL and token. The pairing is left as it is. */
     suspend fun save(settings: AppSettings)
+
+    suspend fun savePairing(deviceId: String, name: String)
 }
 
 val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -43,6 +51,8 @@ class DataStoreSettingsRepository(
         AppSettings(
             serverUrl = prefs[SERVER_URL] ?: defaultServerUrl,
             apiToken = prefs[API_TOKEN].orEmpty(),
+            pairedDeviceId = prefs[PAIRED_DEVICE_ID],
+            pairedDeviceName = prefs[PAIRED_DEVICE_NAME],
         )
     }
 
@@ -53,8 +63,17 @@ class DataStoreSettingsRepository(
         }
     }
 
+    override suspend fun savePairing(deviceId: String, name: String) {
+        dataStore.edit { prefs ->
+            prefs[PAIRED_DEVICE_ID] = deviceId
+            prefs[PAIRED_DEVICE_NAME] = name
+        }
+    }
+
     private companion object {
         val SERVER_URL = stringPreferencesKey("server_url")
         val API_TOKEN = stringPreferencesKey("api_token")
+        val PAIRED_DEVICE_ID = stringPreferencesKey("paired_device_id")
+        val PAIRED_DEVICE_NAME = stringPreferencesKey("paired_device_name")
     }
 }

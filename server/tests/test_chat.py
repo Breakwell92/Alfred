@@ -24,6 +24,9 @@ from alfred_server.config import Settings
 from alfred_server.confirmations.service import ConfirmationService
 from alfred_server.confirmations.store import ConfirmationStore
 from alfred_server.connectors.registry import default_registry
+from alfred_server.devices.api import device_service_dependency
+from alfred_server.devices.service import DeviceService
+from alfred_server.devices.store import DeviceStore
 from alfred_server.main import create_app
 from alfred_server.models.gateway import CallMetadata, ModelAlias, gateway_model
 from tests.budget_helpers import memory_engine
@@ -90,7 +93,9 @@ class ChatHarness:
         self.confirmations = ConfirmationService(
             ConfirmationStore(memory_engine()), default_registry(), clock=self.clock
         )
+        self.devices = DeviceService(DeviceStore(memory_engine()), clock=self.clock)
         self.app = create_app()
+        self.app.dependency_overrides[device_service_dependency] = lambda: self.devices
         self.app.dependency_overrides[agent_db_dependency] = lambda: self.db
         self.app.dependency_overrides[model_factory_dependency] = lambda: self._model
         # A lambda so tests can swap `self.budget` after the harness is built.

@@ -12,6 +12,7 @@ import pytest
 from agno.run.base import RunStatus
 
 from alfred_server.connectors.builtin.test_messages import SENT_TEST_MESSAGES
+from tests.device_helpers import FakeApp
 from tests.llm_fakes import (
     reply,
     route_completion,
@@ -231,10 +232,96 @@ def test_irreversible_rejects_text_approval(harness: ChatHarness) -> None:
     harness.post("/chat", text="Hi", session_id="s1")
     assert len(pending(harness)) == 1
 
+    # Approved from a paired app, signed.
+    app = FakeApp()
+    app.pair(harness.devices)
     harness.reply_with(reply("Sent."))
-    response = answer(harness, c["id"], approve=True, channel="app_ui")
-    assert response.status_code == 200
+    proof = app.proof(c["id"], at=harness.clock())
+    response = answer(harness, c["id"], approve=True, channel="app_ui", proof=proof)
+    assert response.status_code == 200, response.text
     assert response.json()["reply"] == "Sent."
+    assert SENT_TEST_MESSAGES == [("Sam", "Running 10 mins late")]
+
+
+def irreversible_pending(h: ChatHarness) -> dict[str, Any]:
+    assert set_risk(h, "irreversible").status_code == 200
+    c: dict[str, Any] = ask_to_send(h, session_id="s1")["confirmation"]
+    assert c["tier"] == "irreversible"
+    return c
+
+
+def assert_not_approved(h: ChatHarness) -> None:
+    assert SENT_TEST_MESSAGES == []
+    assert [p["status"] for p in pending(h)] == ["pending"]
+
+
+def test_the_shared_token_alone_cannot_claim_app_ui(harness: ChatHarness) -> None:
+    c = irreversible_pending(harness)
+
+    response = answer(harness, c["id"], approve=True, channel="app_ui")
+
+    assert response.status_code == 403
+    assert "paired Alfred app" in response.json()["detail"]
+    assert_not_approved(harness)
+
+
+def test_a_bad_signature_is_rejected(harness: ChatHarness) -> None:
+    c = irreversible_pending(harness)
+    app = FakeApp()
+    app.pair(harness.devices)
+    proof = app.proof(c["id"], at=harness.clock())
+    proof["signature"] = FakeApp().proof(c["id"], at=harness.clock())["signature"]
+
+    response = answer(harness, c["id"], approve=True, channel="app_ui", proof=proof)
+
+    assert response.status_code == 403
+    assert_not_approved(harness)
+
+
+def test_a_proof_for_another_answer_is_rejected(harness: ChatHarness) -> None:
+    c = irreversible_pending(harness)
+    app = FakeApp()
+    app.pair(harness.devices)
+
+    for proof in (
+        app.proof("another-confirmation", at=harness.clock()),
+        app.proof(c["id"], approve=False, at=harness.clock()),
+    ):
+        response = answer(harness, c["id"], approve=True, channel="app_ui", proof=proof)
+        assert response.status_code == 403
+    assert_not_approved(harness)
+
+
+def test_an_unpaired_key_is_rejected(harness: ChatHarness) -> None:
+    c = irreversible_pending(harness)
+    stranger = FakeApp()
+    stranger.device_id = "made-up"
+
+    proof = stranger.proof(c["id"], at=harness.clock())
+    response = answer(harness, c["id"], approve=True, channel="app_ui", proof=proof)
+
+    assert response.status_code == 403
+    assert_not_approved(harness)
+
+
+def test_denying_needs_no_proof(harness: ChatHarness) -> None:
+    c = irreversible_pending(harness)
+
+    response = answer(harness, c["id"], approve=False, channel="app_ui")
+
+    assert response.status_code == 200
+    assert pending(harness) == []
+    assert SENT_TEST_MESSAGES == []
+
+
+def test_an_unsigned_app_ui_claim_still_approves_a_write(harness: ChatHarness) -> None:
+    # Treated as a text answer, which may approve a write.
+    c = ask_to_send(harness, session_id="s1")["confirmation"]
+    harness.reply_with(reply("Sent."))
+
+    response = answer(harness, c["id"], approve=True, channel="app_ui")
+
+    assert response.status_code == 200
     assert SENT_TEST_MESSAGES == [("Sam", "Running 10 mins late")]
 
 

@@ -17,13 +17,15 @@ from alfred_server.agents.context import RequestContext
 from alfred_server.agents.router import AgentRunError, Router
 from alfred_server.chat import confirmation_service_dependency, router_dependency
 from alfred_server.config import Settings, get_settings
-from alfred_server.confirmations.models import Tier, can_approve
+from alfred_server.confirmations.models import Channel, Tier, can_approve
 from alfred_server.confirmations.service import (
     ConfirmationService,
     ConfirmationsUnavailableError,
     cancel_paused_run,
     denied_reply,
 )
+from alfred_server.devices.api import Devices
+from alfred_server.devices.service import ApprovalProof, ApprovalProofError
 from alfred_server.models.gateway import GatewayNotConfiguredError
 
 logger = logging.getLogger(__name__)
@@ -35,11 +37,12 @@ Service = Annotated[ConfirmationService, Depends(confirmation_service_dependency
 
 class ConfirmationAnswer(BaseModel):
     approve: bool
-    # Where the answer comes from. Only the Alfred app's own confirmation screen should send
-    # `app_ui`; it's the only channel that can approve an `irreversible` tool. NOT
-    # authenticated: it's asserted by the client, and any holder of the shared API token can
-    # claim it. Binding it to the app is STU-109 (ADR 0013).
+    # Where the answer comes from. `app_ui` (the Alfred app's own confirmation screen) is the
+    # only channel that can approve an `irreversible` tool, and an approval only counts as
+    # `app_ui` with a valid `proof` signed by a paired device (ADR 0014). Without one it's
+    # treated as `text`.
     channel: Literal["text", "app_ui"] = "text"
+    proof: ApprovalProof | None = None
 
 
 class ConfirmationResult(BaseModel):
@@ -70,6 +73,30 @@ def _unavailable(exc: Exception) -> HTTPException:
     return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Confirmations are unavailable")
 
 
+async def _verified_channel(
+    body: ConfirmationAnswer, confirmation_id: str, devices: Devices
+) -> Channel:
+    """The channel an approval really came from. `app_ui` only with a valid signed proof; a
+    claimed `app_ui` without one is a plain `text` answer. A proof that fails is a 403."""
+    if body.channel != "app_ui":
+        return body.channel
+    if body.proof is None:
+        return "text"
+    try:
+        device = await asyncio.to_thread(
+            devices.verify_approval, body.proof, confirmation_id, body.approve
+        )
+    except ApprovalProofError as exc:
+        logger.warning("rejected app_ui approval of %s: %s", confirmation_id, exc)
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "This approval isn't signed by a paired Alfred app."
+        ) from exc
+    except Exception as exc:
+        raise _unavailable(exc) from exc
+    logger.info("confirmation %s approved on device %s", confirmation_id, device.name)
+    return "app_ui"
+
+
 @router.get("/confirmations/pending")
 async def pending_confirmations(service: Service) -> dict[str, list[dict[str, Any]]]:
     """Confirmations waiting for an answer, oldest first."""
@@ -87,6 +114,7 @@ async def answer_confirmation(
     service: Service,
     agent_router: Annotated[Router, Depends(router_dependency)],
     settings: Annotated[Settings, Depends(get_settings)],
+    devices: Devices,
 ) -> ConfirmationResult:
     """Approve (the run continues and `reply` is its answer) or deny (it's cancelled)."""
     try:
@@ -112,10 +140,12 @@ async def answer_confirmation(
         tier = await asyncio.to_thread(service.current_tier, c)
     except Exception as exc:
         raise _unavailable(exc) from exc
-    if not can_approve(tier, body.channel):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "This action can only be approved in the Alfred app."
-        )
+    channel = await _verified_channel(body, c.id, devices)
+    if not can_approve(tier, channel):
+        detail = "This action can only be approved in the Alfred app."
+        if body.channel == "app_ui":
+            detail = "This action needs an approval signed by a paired Alfred app."
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail)
     if not await asyncio.to_thread(service.resolve, c, "approved"):
         raise HTTPException(status.HTTP_409_CONFLICT, "This confirmation was already answered")
     ctx = RequestContext.build(

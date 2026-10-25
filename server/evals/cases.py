@@ -64,6 +64,8 @@ class EvalCase(BaseModel):
     max_tier: Tier = "cloud"
     # Text the reply must contain (case-insensitive), e.g. the time from the `get_time` fixture.
     reply_contains: list[str] = Field(default_factory=list)
+    # The run must pause for a confirmation of this tier (e.g. `irreversible` to lock a door).
+    expect_confirmation: Literal["write", "irreversible"] | None = None
     notes: str = ""
 
     @field_validator("context")

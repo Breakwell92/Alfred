@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -75,8 +76,10 @@ internal fun ShapedButton(
     val currentOnPress by rememberUpdatedState(onPress)
     val currentOnClick by rememberUpdatedState(onClick)
     val input = when {
-        !enabled && onDisabledClick != null ->
-            Modifier.clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onDisabledClick)
+        // Still announced as disabled; the tap only explains why.
+        !enabled && onDisabledClick != null -> Modifier
+            .semantics { disabled() }
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onDisabledClick)
         onPress != null && enabled -> Modifier
             .indication(source, ripple(color = c.content))
             .semantics {

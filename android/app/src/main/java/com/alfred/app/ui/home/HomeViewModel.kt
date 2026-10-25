@@ -26,8 +26,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Polls `/health` and `/me` while the Home screen is visible (collectors present), and starts
  * over straight away when settings change or [refresh] is called. Failures (a check that
  * throws, unreadable settings) become an error status; they never reach `viewModelScope`.
- * Each time the server comes (back) up it also asks for the active persona and caches it in
- * [profile], so the PROTOCOL tile keeps the last known name offline.
+ * Each successful poll also asks for the active persona and caches it in [profile], so the
+ * PROTOCOL tile follows a switch within one poll and keeps the last known name offline.
  */
 class HomeViewModel(
     settingsRepository: SettingsRepository,
@@ -64,13 +64,11 @@ class HomeViewModel(
 
     private fun poll(settings: AppSettings): Flow<ConnectionStatus> = flow {
         emit(ConnectionStatus.Checking)
-        var wasConnected = false
         while (true) {
             val status = check(settings)
             emit(status)
-            val connected = status == ConnectionStatus.Connected
-            if (connected && !wasConnected) refreshPersona(settings)
-            wasConnected = connected
+            // Every successful poll, so a persona switched while connected shows within one poll.
+            if (status == ConnectionStatus.Connected) refreshPersona(settings)
             withTimeoutOrNull(pollIntervalMillis) { refreshRequests.receive() }
         }
     }

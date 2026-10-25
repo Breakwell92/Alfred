@@ -65,15 +65,28 @@ class HomeScreenshotTest {
         compose.onRoot().captureRoboImage("src/test/screenshots/$file")
     }
 
+    @Test
+    @Config(qualifiers = "w360dp-h640dp-port-xhdpi")
+    fun `a long place keeps the connection state readable`() {
+        compose.setContent {
+            Home(
+                ConnectionStatus.Connected,
+                LinkState.Connected("s1", voice = true),
+                ProfileSettings(location = "Kingston upon Thames"),
+            )
+        }
+        shoot("home_long_place_small.png")
+    }
+
     @Composable
-    private fun Home(status: ConnectionStatus, link: LinkState) {
+    private fun Home(status: ConnectionStatus, link: LinkState, profile: ProfileSettings = ProfileSettings()) {
         AlfredTheme {
             GridBackground {
                 HomeContent(
                     status = status,
                     voice = VoiceUiState(link = link),
                     level = { 0f },
-                    profile = ProfileSettings(),
+                    profile = profile,
                     time = LocalTime.of(2, 14),
                     micDenied = false,
                     onOpenMenu = {},

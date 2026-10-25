@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -207,7 +208,8 @@ fun HomeContent(
             Greeting(
                 name = profile.name ?: stringResource(R.string.default_name),
                 hour = time.hour,
-                error = voice.voice.error,
+                // While the confirmation sheet is up, errors about the answer show there instead.
+                error = voice.voice.error.takeIf { voice.voice.confirmation == null },
             )
         }
         if (micDenied) {
@@ -301,12 +303,22 @@ private fun StatusRow(line: StatusLine, place: String, time: LocalTime) {
             style = type.label,
             color = text,
             maxLines = 1,
-            modifier = Modifier
-                .padding(start = 10.dp)
-                .weight(1f),
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 10.dp, end = AlfredTheme.spacing.s),
+        )
+        // Weighted, so it's measured after the connection state and gets only the room left:
+        // a long place set in Settings is ellipsised rather than squeezing the state.
+        Text(
+            place.uppercase(),
+            style = type.label,
+            color = colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
         )
         Text(
-            "${place.uppercase()} ${formatClock(time)}",
+            " ${formatClock(time)}",
             style = type.label,
             color = colors.textSecondary,
             maxLines = 1,

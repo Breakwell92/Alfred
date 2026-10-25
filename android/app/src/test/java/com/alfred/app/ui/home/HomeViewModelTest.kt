@@ -148,7 +148,7 @@ class HomeViewModelTest {
     }
 
     @Test
-    fun `caches the active persona when the server comes up`() = runTest(mainDispatcher.dispatcher) {
+    fun `caches the active persona on every successful poll`() = runTest(mainDispatcher.dispatcher) {
         server.persona = "Butler"
         val vm = viewModel()
         backgroundScope.launch { vm.status.collect {} }
@@ -157,17 +157,29 @@ class HomeViewModelTest {
         assertEquals("Butler", vm.profile.value.personaName)
         assertEquals(1, server.personaAsked)
 
-        // Still connected on the next poll: no need to ask again.
+        // Down: not asked.
+        server.status = ConnectionStatus.Unreachable("down")
         advanceTimeBy(10_001)
         assertEquals(1, server.personaAsked)
 
-        // Down, then back up: asks again.
-        server.status = ConnectionStatus.Unreachable("down")
-        advanceTimeBy(10_000)
+        // Back up: asked again.
         server.status = ConnectionStatus.Connected
-        server.persona = "Dry"
         advanceTimeBy(10_000)
         assertEquals(2, server.personaAsked)
+    }
+
+    @Test
+    fun `a persona switched while connected shows on the next poll`() = runTest(mainDispatcher.dispatcher) {
+        server.persona = "Butler"
+        val vm = viewModel()
+        backgroundScope.launch { vm.status.collect {} }
+        backgroundScope.launch { vm.profile.collect {} }
+        assertEquals("Butler", vm.profile.value.personaName)
+
+        server.persona = "Dry"
+        advanceTimeBy(10_001)
+
+        assertEquals(ConnectionStatus.Connected, vm.status.value)
         assertEquals("Dry", vm.profile.value.personaName)
     }
 

@@ -46,9 +46,9 @@ Tiles grow if a persona name is longer. The mic sits in a `Box` so it stays cent
 - 12:00–17:59 → afternoon
 - 18:00–04:59 → evening (the design greets "GOOD EVENING" at 02:14)
 
-**Flavour copy** is in `res/values/strings.xml`: subtitle "Batcave Uplink", default name "Master Bruce", place "Gotham" and persona "Classic". Name and place are settings (Settings → Home screen, `ProfileSettings` in the settings DataStore under their own keys). Blank means the default.
+**Flavour copy** is in `res/values/strings.xml`: subtitle "Batcave Uplink", default name "Master Bruce", place "Gotham" and persona "Classic". Name and place are settings (Settings → Home screen, `ProfileSettings` in the settings DataStore under their own keys). Blank means the default. The status row measures the connection state first; a long place gets only the room left and is ellipsised.
 
-**Persona.** The PROTOCOL tile shows the active persona's name. `HomeViewModel` asks `GET /personas/active` each time the server comes (back) up and caches the answer in `ProfileSettings.personaName`, so the tile keeps the last name offline. STU-66 builds the endpoint. **It must answer `200 {"name": "<display name>", ...}`**. Until it exists the call gets a 404 and the tile shows the cached name or "Classic". Tapping the tile opens Voice Protocol, a placeholder destination until STU-118.
+**Persona.** The PROTOCOL tile shows the active persona's name. `HomeViewModel` asks `GET /personas/active` on every successful poll and caches a non-null answer in `ProfileSettings.personaName`. A switch made while connected (by voice or on Voice Protocol) shows within one poll, and the tile keeps the last name offline. STU-66 builds the endpoint. **It must answer `200 {"name": "<display name>", ...}`**. Until it exists the call gets a 404 and the tile shows the cached name or "Classic". Tapping the tile opens Voice Protocol, a placeholder destination until STU-118.
 
 **Mic button.** `OctagonActionButton` (through `ShapedButton`) gained:
 

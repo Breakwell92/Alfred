@@ -42,7 +42,7 @@ class EnergyEndOfSpeechTest {
     @Test
     fun `gives up when nobody speaks`() {
         val eos = EnergyEndOfSpeech()
-        assertFalse(eos.feed(3_980, level = 50))
+        assertFalse(eos.feed(4_980, level = 50))
         assertTrue(eos.onFrame(frame(50)))
     }
 
@@ -59,13 +59,13 @@ class EnergyEndOfSpeechTest {
     @Test
     fun `stops at the cap`() {
         val eos = EnergyEndOfSpeech()
-        assertFalse(eos.feed(100, level = 50))
+        assertFalse(eos.feed(400, level = 50))
         // Talking non-stop (short breaths only) for 15 s.
         var ended = false
         repeat(19) { ended = ended || eos.feed(600, level = 3_000) || eos.feed(200, level = 50) }
         assertTrue(ended)
         val fresh = EnergyEndOfSpeech()
-        assertFalse(fresh.feed(100, level = 50))
+        assertFalse(fresh.feed(400, level = 50))
         repeat(17) {
             assertFalse(fresh.feed(600, level = 3_000))
             assertFalse(fresh.feed(200, level = 50))
@@ -80,5 +80,30 @@ class EnergyEndOfSpeechTest {
         assertFalse(eos.feed(800, level = 3_000))
         assertFalse(eos.feed(980, level = 50))
         assertTrue(eos.onFrame(frame(50)))
+    }
+
+    @Test
+    fun `the chime's echo and the recorder starting don't count as speech`() {
+        // What the phone sent: blank frames, the tail of the beep, then quiet while Dan waits.
+        val eos = EnergyEndOfSpeech()
+        assertFalse(eos.feed(60, level = 0))
+        assertFalse(eos.feed(200, level = 4_000))
+        assertFalse(eos.feed(1_500, level = 60))
+        // Then he speaks, and the turn ends a second after he stops.
+        assertFalse(eos.feed(1_200, level = 2_500))
+        assertFalse(eos.feed(980, level = 60))
+        assertTrue(eos.onFrame(frame(60)))
+    }
+
+    @Test
+    fun `a click isn't the start of speech`() {
+        val eos = EnergyEndOfSpeech()
+        assertFalse(eos.feed(400, level = 60))
+        assertFalse(eos.feed(100, level = 3_000))
+        // Not speech yet, so no 1 s countdown: it waits for real speech (or the 5 s limit).
+        assertFalse(eos.feed(2_000, level = 60))
+        assertFalse(eos.feed(600, level = 3_000))
+        assertFalse(eos.feed(980, level = 60))
+        assertTrue(eos.onFrame(frame(60)))
     }
 }

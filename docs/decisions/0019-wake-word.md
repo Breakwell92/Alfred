@@ -43,10 +43,10 @@ The three sessions are created once per model and run single-threaded. Models ar
 
 **End of speech (temporary).** A wake word turn has no button release. Until Silero VAD (STU-69), `EnergyEndOfSpeech` (`data/voice/EndOfSpeech.kt`) ends the turn:
 - after 1 s of quiet once speech has started;
-- after 4 s if nobody speaks;
+- after 5 s if nobody speaks;
 - at 15 s in any case.
 
-A 20 ms frame counts as speech when its RMS is 3× the quietest frame of the last 3 s and at least 300. STU-69 replaces it behind the same `EndOfSpeechDetector` interface.
+A 20 ms frame counts as speech when its RMS is 3× the quietest frame of the last 3 s and at least 300. Blank frames don't count towards that floor. Speech has only "started" after 200 ms of it, and nothing in the first 300 ms after the mic opens counts at all. Without those two rules, the first phone test ended every turn after about 1.5 s: the chime's echo and the recorder starting up looked like speech, then the wait for Dan to begin looked like the pause at the end. The server got about 1.5 s of near-silence, and Whisper heard "Thank you." STU-69 replaces it behind the same `EndOfSpeechDetector` interface.
 
 **Tuning data.** Every wake and every "That wasn't me" is appended to `files/wake_events.jsonl` (`{kind, at, model, score}`). Read it with `adb shell run-as com.alfred.app cat files/wake_events.jsonl`. Settings shows the counts.
 

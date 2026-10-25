@@ -14,23 +14,30 @@ fun interface EndOfSpeechDetector {
 /**
  * A stopgap energy endpointer until Silero VAD (STU-69, ADR 0019). The noise floor is the
  * quietest 20 ms frame of the last 3 s, so a steady fan or TV sets its own level; a frame is
- * speech when it's well above that (and above an absolute minimum). The turn ends after
- * [silenceMillis] of quiet following speech, after [noSpeechMillis] if no speech starts, or at
- * [maxMillis] whatever happens.
+ * speech when it's well above that (and above an absolute minimum).
+ *
+ * The first [ignoreStartMillis] never count as speech: that's when the wake chime's echo and
+ * the recorder's start-up land. Speech has "started" only after [minSpeechMillis] of it, so a
+ * click or a cough doesn't start the silence countdown. The turn ends after [silenceMillis] of
+ * quiet once speech has started, after [noSpeechMillis] if it never does, or at [maxMillis].
  */
 class EnergyEndOfSpeech(
     private val silenceMillis: Int = 1_000,
-    private val noSpeechMillis: Int = 4_000,
+    private val noSpeechMillis: Int = 5_000,
     private val maxMillis: Int = 15_000,
     private val minSpeechRms: Double = 300.0,
     private val speechOverNoise: Double = 3.0,
+    private val ignoreStartMillis: Int = 300,
+    private val minSpeechMillis: Int = 200,
 ) : EndOfSpeechDetector {
     private val recent = DoubleArray(FLOOR_WINDOW_FRAMES)
     private var frames = 0
     private var elapsedMillis = 0
     private var quietMillis = 0
-    private var heardSpeech = false
+    private var speechMillis = 0
     private var ended = false
+
+    private val heardSpeech get() = speechMillis >= minSpeechMillis
 
     override fun onFrame(pcm: ByteArray): Boolean {
         if (ended) return true
@@ -39,11 +46,13 @@ class EnergyEndOfSpeech(
         val millis = samples * 1000 / SAMPLE_RATE
         elapsedMillis += millis
         val level = rms(pcm, samples)
-        recent[frames++ % FLOOR_WINDOW_FRAMES] = level
+        // Digital silence (the recorder starting up) says nothing about the room's noise.
+        if (level >= 1.0) recent[frames++ % FLOOR_WINDOW_FRAMES] = level
         var floor = Double.MAX_VALUE
         for (i in 0 until minOf(frames, FLOOR_WINDOW_FRAMES)) floor = minOf(floor, recent[i])
-        if (level >= maxOf(minSpeechRms, floor * speechOverNoise)) {
-            heardSpeech = true
+        val speech = elapsedMillis > ignoreStartMillis && level >= maxOf(minSpeechRms, floor * speechOverNoise)
+        if (speech) {
+            speechMillis += millis
             quietMillis = 0
         } else {
             quietMillis += millis

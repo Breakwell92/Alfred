@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -70,7 +69,9 @@ import com.alfred.app.data.voice.PendingConfirmation
 import com.alfred.app.data.voice.TurnMetadata
 import com.alfred.app.data.voice.VoicePhase
 import com.alfred.app.data.voice.VoiceState
+import com.alfred.app.ui.components.GridBackground
 import com.alfred.app.ui.theme.AlfredTheme
+import com.alfred.app.ui.theme.OctagonShape
 import java.util.Locale
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -233,7 +234,7 @@ private fun TalkButton(
     val label = talkLabel(phase)
     val listening = phase == VoicePhase.Listening
     Surface(
-        shape = CircleShape,
+        shape = OctagonShape,
         color = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
         contentColor = if (listening) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
         modifier = Modifier
@@ -366,23 +367,25 @@ private fun ConnectionStatus.toView(): StatusView = when (this) {
         StatusView("Server error", "The server answered $code.", Icons.Filled.Error)
 }
 
-@Preview(showBackground = true)
+@Preview
 @Composable
 private fun HomeContentPreview() {
     AlfredTheme {
-        HomeContent(
-            status = ConnectionStatus.Connected,
-            voice = VoiceUiState(
-                voice = VoiceState(transcript = "What time is it?", reply = "It's ten past three."),
-                link = LinkState.Connected("s1", voice = true),
-            ),
-            micDenied = false,
-            onCheckNow = {},
-            onTalkPressed = { true },
-            onTalkReleased = {},
-            onOpenAppSettings = {},
-            onAnswer = {},
-            onDismissConfirmation = {},
-        )
+        GridBackground {
+            HomeContent(
+                status = ConnectionStatus.Connected,
+                voice = VoiceUiState(
+                    voice = VoiceState(transcript = "What time is it?", reply = "It's ten past three."),
+                    link = LinkState.Connected("s1", voice = true),
+                ),
+                micDenied = false,
+                onCheckNow = {},
+                onTalkPressed = { true },
+                onTalkReleased = {},
+                onOpenAppSettings = {},
+                onAnswer = {},
+                onDismissConfirmation = {},
+            )
+        }
     }
 }

@@ -1,23 +1,47 @@
 package com.alfred.app.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 
-/** Material 3 with dynamic (wallpaper) colour on API 31+, default colours below that. */
+private val LocalAlfredColors = staticCompositionLocalOf { AlfredDarkColors }
+private val LocalAlfredTypography = staticCompositionLocalOf { AlfredTypography() }
+private val LocalAlfredSpacing = staticCompositionLocalOf { AlfredSpacing() }
+
+/**
+ * Alfred's dark-only theme (ADR 0018). Provides Alfred's own tokens through [AlfredTheme] and
+ * the matching Material 3 colours, type and shapes for stock components.
+ */
 @Composable
-fun AlfredTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    val context = LocalContext.current
-    val colorScheme = when {
-        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S ->
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        darkTheme -> darkColorScheme()
-        else -> lightColorScheme()
+fun AlfredTheme(content: @Composable () -> Unit) {
+    val colors = AlfredDarkColors
+    val typography = AlfredTypography()
+    CompositionLocalProvider(
+        LocalAlfredColors provides colors,
+        LocalAlfredTypography provides typography,
+        LocalAlfredSpacing provides AlfredSpacing(),
+    ) {
+        MaterialTheme(
+            colorScheme = colors.toColorScheme(),
+            typography = typography.toMaterial(),
+            shapes = AlfredMaterialShapes,
+            content = content,
+        )
     }
-    MaterialTheme(colorScheme = colorScheme, content = content)
+}
+
+object AlfredTheme {
+    val colors: AlfredColors
+        @Composable @ReadOnlyComposable
+        get() = LocalAlfredColors.current
+
+    val typography: AlfredTypography
+        @Composable @ReadOnlyComposable
+        get() = LocalAlfredTypography.current
+
+    val spacing: AlfredSpacing
+        @Composable @ReadOnlyComposable
+        get() = LocalAlfredSpacing.current
 }

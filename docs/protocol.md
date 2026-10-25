@@ -52,8 +52,9 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 
 | Type | Fields | Notes |
 | --- | --- | --- |
-| `hello.ok` | `protocol`, `server_version`, `session_id`, `input_sample_rate`, `output_sample_rate`, `voice` | `voice` is false when the server has STT or TTS off; turns are then refused. |
+| `hello.ok` | `protocol`, `server_version`, `session_id`, `input_sample_rate`, `output_sample_rate`, `max_audio_s`, `voice` | `voice` is false when the server has STT or TTS off; turns are then refused. `max_audio_s` is the longest utterance accepted (`ALFRED_STT_MAX_AUDIO_S`); the app ends a turn just before it. |
 | `pong` | `t` | |
+| `transcript.partial` | `turn_id`, `stable`, `unstable` | While audio streams in (every `ALFRED_STT_PARTIAL_INTERVAL_S`, when the GPU is free): what's been heard so far. `stable` words won't change; the `unstable` tail may. Always before `transcript.final`. See [ADR 0021](decisions/0021-recording-screen.md). |
 | `transcript.final` | `turn_id`, `text`, `language`, `audio_s` | What was heard. |
 | `reply.text.delta` | `turn_id`, `text` | Reply text as it's generated (for captions). |
 | `reply.audio.start` | `turn_id`, `sample_rate` (24000), `encoding` (`pcm_s16le`), `channels` (1) | Before the first audio frame of a turn. |
@@ -87,6 +88,9 @@ Reply audio carries its turn id so the device can drop audio from a turn it has 
 ```
 → turn.start {turn_id: "t1"}
 → <PCM> <PCM> …
+← transcript.partial {stable: "", unstable: "What time"}      (while audio is still arriving)
+→ <PCM> …
+← transcript.partial {stable: "What time", unstable: "is it"}
 → turn.end {turn_id: "t1"}
 ← transcript.final {text: "What time is it?"}
 ← reply.text.delta {text: "It's "} …
@@ -111,6 +115,5 @@ Tools that change things are gated ([ADR 0013](decisions/0013-confirmation-gatin
 
 Not sent or accepted yet (`unsupported` if received), kept for later tickets:
 
-- `transcript.partial` (server → device): interim transcripts, once the STT engine streams them.
 - `tool.call` / `tool.result`: tools that run on the device (STU-81).
 - `push.notification`: server-initiated messages (STU-84).

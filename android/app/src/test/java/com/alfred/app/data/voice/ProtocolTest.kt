@@ -90,6 +90,26 @@ class ProtocolTest {
     }
 
     @Test
+    fun `hello ok may say how long an utterance can be`() {
+        val hello = parseServerMessage(
+            """{"type":"hello.ok","session_id":"s-1","voice":true,"max_audio_s":30.0}""",
+        ) as ServerMessage.HelloOk
+        assertEquals(30.0, hello.maxAudioSeconds!!, 0.0)
+    }
+
+    @Test
+    fun `parses partial transcripts`() {
+        assertEquals(
+            ServerMessage.TranscriptPartial("t1", stable = "Set a", unstable = "timer for"),
+            parseServerMessage("""{"type":"transcript.partial","turn_id":"t1","stable":"Set a","unstable":"timer for"}"""),
+        )
+        assertEquals(
+            ServerMessage.TranscriptPartial("t1", stable = "", unstable = "Set"),
+            parseServerMessage("""{"type":"transcript.partial","turn_id":"t1","unstable":"Set"}"""),
+        )
+    }
+
+    @Test
     fun `parses turn messages`() {
         assertEquals(ServerMessage.Pong(3.0), parseServerMessage("""{"type":"pong","t":3}"""))
         assertEquals(

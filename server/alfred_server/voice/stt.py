@@ -1,5 +1,9 @@
 """Speech-to-text: 16 kHz mono 16-bit PCM chunks in, a `Transcript` out.
 
+While the audio streams in, `transcribe` can also report partial transcripts (`Partial`): the
+buffered audio is re-decoded every `stt_partial_interval_s`, and words two decodes in a row agree
+on count as stable (docs/decisions/0021-recording-screen.md).
+
 The voice gateway depends only on the `SpeechToText` protocol, so the engine can be swapped
 (e.g. for a Parakeet-class model). The default engine is faster-whisper (CTranslate2), loaded
 once per process via `get_stt()`. Model choice and benchmarks: docs/decisions/0002-stt.md.
@@ -12,9 +16,10 @@ import ctypes
 import importlib.util
 import logging
 import os
+import re
 import sys
 import time
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -38,9 +43,26 @@ class Transcript:
     processing_s: float
 
 
+@dataclass(frozen=True)
+class Partial:
+    """An interim transcript: `stable` words won't change; the `unstable` tail still may."""
+
+    stable: str
+    unstable: str
+
+
+PartialCallback = Callable[[Partial], Awaitable[None]]
+
+
 class SpeechToText(Protocol):
-    async def transcribe(self, chunks: AsyncIterator[bytes]) -> Transcript:
-        """Transcribe one utterance, streamed as raw PCM chunks of any size."""
+    async def transcribe(
+        self, chunks: AsyncIterator[bytes], on_partial: PartialCallback | None = None
+    ) -> Transcript:
+        """Transcribe one utterance, streamed as raw PCM chunks of any size.
+
+        `on_partial`, if given, may be called with interim transcripts while the audio streams,
+        always before `transcribe` returns.
+        """
         ...
 
 
@@ -52,6 +74,29 @@ class WhisperLikeModel(Protocol):
 
 class AudioTooLongError(ValueError):
     """The streamed utterance exceeded `stt_max_audio_s`."""
+
+
+def _word_key(word: str) -> str:
+    """A word compared without case or punctuation ("timer," and "Timer" agree)."""
+    return re.sub(r"[^\w']", "", word.lower())
+
+
+def split_partial(hypothesis: str, previous: str, stable: str) -> Partial:
+    """Split a fresh decode into stable and unstable words (LocalAgreement-2).
+
+    Words count as stable once two decodes in a row (`previous`, `hypothesis`) agree on them,
+    from the start. Stable words never change or shrink: once `stable` is said, it is kept as it
+    was, and only the words after it can be revised.
+    """
+    words = hypothesis.split()
+    agreed = 0
+    for new, old in zip(words, previous.split(), strict=False):
+        if _word_key(new) != _word_key(old):
+            break
+        agreed += 1
+    kept = stable.split()
+    stable_words = kept + words[len(kept) : agreed]
+    return Partial(" ".join(stable_words), " ".join(words[len(stable_words) :]))
 
 
 def pcm16_to_float32(data: bytes) -> np.ndarray:
@@ -69,17 +114,32 @@ class FasterWhisperSTT:
         self._model = model if model is not None else _load_model(settings)
         self._slots = asyncio.Semaphore(settings.stt_max_concurrency)
 
-    async def transcribe(self, chunks: AsyncIterator[bytes]) -> Transcript:
+    async def transcribe(
+        self, chunks: AsyncIterator[bytes], on_partial: PartialCallback | None = None
+    ) -> Transcript:
         max_bytes = int(self._settings.stt_max_audio_s * SAMPLE_RATE) * 2
+        step_bytes = int(self._settings.stt_partial_interval_s * SAMPLE_RATE) * 2
+        partials = (
+            _PartialDecoder(self, on_partial, step_bytes) if on_partial and step_bytes else None
+        )
         buffer = bytearray()
-        async for chunk in chunks:
-            buffer.extend(chunk)
-            if len(buffer) > max_bytes:
-                # Stop reading: a stuck VAD or misbehaving client must not grow this forever.
-                raise AudioTooLongError(
-                    f"Utterance longer than {self._settings.stt_max_audio_s:g} s "
-                    "(ALFRED_STT_MAX_AUDIO_S)"
-                )
+        try:
+            async for chunk in chunks:
+                buffer.extend(chunk)
+                if len(buffer) > max_bytes:
+                    # Stop reading: a stuck VAD or misbehaving client must not grow this forever.
+                    raise AudioTooLongError(
+                        f"Utterance longer than {self._settings.stt_max_audio_s:g} s "
+                        "(ALFRED_STT_MAX_AUDIO_S)"
+                    )
+                if partials:
+                    partials.feed(buffer)
+        except BaseException:
+            if partials:
+                partials.abandon()
+            raise
+        if partials:
+            await partials.finish()
         audio = pcm16_to_float32(bytes(buffer))
         duration = len(audio) / SAMPLE_RATE
         if not len(audio):
@@ -109,6 +169,76 @@ class FasterWhisperSTT:
         # `segments` is lazy: decoding happens while iterating, so keep it in this thread.
         text = " ".join(seg.text.strip() for seg in segments).strip()
         return text, getattr(info, "language", s.stt_language)
+
+
+_background: set[asyncio.Task[None]] = set()
+"""Partial decodes abandoned mid-run, kept referenced until their thread finishes."""
+
+
+class _PartialDecoder:
+    """Re-decodes the audio so far, one decode at a time, to report `Partial`s.
+
+    A partial decode starts once `step_bytes` of new audio have arrived since the last one, if
+    none is running and an STT slot is free: it never queues behind another turn's decode, so
+    partials can't slow anyone's final transcript by more than one short decode. The slot is
+    checked again as the decode starts, since another turn may take it after `feed` schedules it.
+    """
+
+    def __init__(self, stt: FasterWhisperSTT, on_partial: PartialCallback, step_bytes: int):
+        self._stt = stt
+        self._on_partial = on_partial
+        self._step_bytes = step_bytes
+        self._decoded_bytes = 0
+        self._previous = ""
+        self._stable = ""
+        self._task: asyncio.Task[None] | None = None
+        self._closed = False
+
+    def feed(self, buffer: bytearray) -> None:
+        if self._task is not None and not self._task.done():
+            return
+        if len(buffer) - self._decoded_bytes < self._step_bytes or self._stt._slots.locked():
+            return
+        size = len(buffer) - len(buffer) % 2  # a chunk may end mid-sample
+        previous, self._decoded_bytes = self._decoded_bytes, size
+        self._task = asyncio.create_task(self._run(bytes(buffer[:size]), previous))
+
+    async def finish(self) -> None:
+        """End of audio: let a running partial finish (it's sent before the final transcript)."""
+        if self._task is not None:
+            await self._task
+        self._closed = True
+
+    def abandon(self) -> None:
+        """The turn failed or was cancelled: send nothing more, but let the decode end."""
+        self._closed = True
+        task = self._task
+        if task is not None and not task.done():
+            # Its thread still holds the STT slot; keep the task alive until it lets go.
+            _background.add(task)
+            task.add_done_callback(_background.discard)
+
+    async def _run(self, pcm: bytes, previous_bytes: int) -> None:
+        # Another turn may have taken the last slot since `feed`. Checked right before acquiring
+        # (nothing awaits in between, and a free semaphore is taken without yielding), so a
+        # partial never waits in the queue; the next `feed` tries again.
+        if self._closed or self._stt._slots.locked():
+            self._decoded_bytes = previous_bytes
+            return
+        try:
+            async with self._stt._slots:
+                if self._closed:
+                    return
+                text, _ = await asyncio.to_thread(self._stt._decode, pcm16_to_float32(pcm))
+            if self._closed:
+                return
+            partial = split_partial(text, self._previous, self._stable)
+            self._previous, self._stable = text, partial.stable
+            if partial.stable or partial.unstable:
+                await self._on_partial(partial)
+        except Exception:
+            # Partials are a nicety: the final transcript doesn't depend on them.
+            logger.warning("partial STT decode failed", exc_info=True)
 
 
 @lru_cache

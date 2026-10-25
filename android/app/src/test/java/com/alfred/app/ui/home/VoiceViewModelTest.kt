@@ -3,6 +3,7 @@ package com.alfred.app.ui.home
 import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.settings.AppSettings
 import com.alfred.app.data.voice.ClientMessage
+import com.alfred.app.data.voice.FRAME_BYTES
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.ServerMessage
 import com.alfred.app.data.voice.VoiceController
@@ -29,11 +30,12 @@ class VoiceViewModelTest {
 
     private val connection = FakeDeviceConnection()
     private val player = FakeAudioPlayer()
+    private val capture = FakeAudioCapture()
 
     private fun TestScope.viewModel(): Pair<VoiceViewModel, VoiceController> {
         val controller = VoiceController(
             connection = connection,
-            capture = FakeAudioCapture(),
+            capture = capture,
             player = player,
             serverClient = FakeServerClient(),
             settingsRepository = FakeSettingsRepository(AppSettings("http://glados:8000", "token")),
@@ -53,6 +55,43 @@ class VoiceViewModelTest {
         vm.onTalkPressed()
         assertEquals(VoicePhase.Listening, phaseOf(voice))
         vm.onTalkReleased(heldMillis = 1_500)
+
+        assertEquals(VoicePhase.Thinking, phaseOf(voice))
+        assertTrue(connection.sent.last() is ClientMessage.TurnEnd)
+    }
+
+    @Test
+    fun `a tapped turn sends itself once the speaker goes quiet`() = runTest(mainDispatcher.dispatcher) {
+        val (vm, voice) = viewModel()
+        vm.onTalkPressed()
+        vm.onTalkReleased(heldMillis = 100)
+
+        // Nobody's spoken yet: room noise doesn't end it.
+        repeat(400) { capture.frames.trySend(square(30)) }
+        assertEquals(VoicePhase.Listening, phaseOf(voice))
+        // Speech, then a second of quiet, does.
+        repeat(25) { capture.frames.trySend(square(8_000)) }
+        repeat(60) { capture.frames.trySend(square(30)) }
+
+        assertEquals(VoicePhase.Thinking, phaseOf(voice))
+        assertTrue(connection.sent.last() is ClientMessage.TurnEnd)
+    }
+
+    @Test
+    fun `going quiet doesn't end a turn while the button is held`() = runTest(mainDispatcher.dispatcher) {
+        val (vm, voice) = viewModel()
+        vm.onTalkPressed()
+
+        // "Set a timer for…", a 1.5 s pause to think, "…ten minutes", all while holding.
+        repeat(50) { capture.frames.trySend(square(30)) }
+        repeat(25) { capture.frames.trySend(square(8_000)) }
+        repeat(75) { capture.frames.trySend(square(30)) }
+        assertEquals(VoicePhase.Listening, phaseOf(voice))
+        repeat(25) { capture.frames.trySend(square(8_000)) }
+        assertEquals(VoicePhase.Listening, phaseOf(voice))
+        assertTrue(connection.sent.none { it is ClientMessage.TurnEnd })
+
+        vm.onTalkReleased(heldMillis = 4_000)
 
         assertEquals(VoicePhase.Thinking, phaseOf(voice))
         assertTrue(connection.sent.last() is ClientMessage.TurnEnd)
@@ -109,5 +148,14 @@ class VoiceViewModelTest {
 
         assertEquals(VoicePhase.Speaking, phaseOf(voice))
         assertEquals(0.4f, vm.level.value, 0f)
+    }
+
+    /** 20 ms of a square wave at ±[amplitude]: 30 is room noise, 8000 speech. */
+    private fun square(amplitude: Int): ByteArray = ByteArray(FRAME_BYTES).also { bytes ->
+        for (i in 0 until FRAME_BYTES / 2) {
+            val value = if (i % 2 == 0) amplitude else -amplitude
+            bytes[2 * i] = (value and 0xFF).toByte()
+            bytes[2 * i + 1] = (value shr 8 and 0xFF).toByte()
+        }
     }
 }

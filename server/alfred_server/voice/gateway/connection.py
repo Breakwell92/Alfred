@@ -89,6 +89,7 @@ class DeviceConnection:
                     session_id=self.session_id,
                     input_sample_rate=INPUT_SAMPLE_RATE,
                     output_sample_rate=OUTPUT_SAMPLE_RATE,
+                    max_audio_s=self.services.settings.stt_max_audio_s,
                     voice=self.services.voice_ready,
                 )
             )

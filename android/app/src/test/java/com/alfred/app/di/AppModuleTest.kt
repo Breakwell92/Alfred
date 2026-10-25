@@ -26,6 +26,7 @@ import com.alfred.app.testing.FakeWakeWordSettingsRepository
 import com.alfred.app.testing.MainDispatcherRule
 import com.alfred.app.ui.home.HomeViewModel
 import com.alfred.app.ui.home.VoiceViewModel
+import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsViewModel
 import com.alfred.app.ui.settings.WakeWordSettingsViewModel
 import org.junit.Rule
@@ -68,5 +69,6 @@ class AppModuleTest {
         koin.get<LinkHolds>()
         koin.get<WakeWordController>()
         koin.get<WakeWordSettingsViewModel>()
+        koin.get<RecordingViewModel>()
     }
 }

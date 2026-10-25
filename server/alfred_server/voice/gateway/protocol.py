@@ -29,8 +29,8 @@ TURN_ID_PATTERN = r"^[A-Za-z0-9._:-]{1,64}$"
 _CONTEXT_TEXT_PATTERN = r"^[^\r\n<>]{1,100}$"
 
 # Names kept for later tickets so nothing else takes them: device tools (STU-81) and pushes
-# (STU-84) in either direction, and partial transcripts (the STT engine has none yet).
-RESERVED_TYPES = frozenset({"tool.call", "tool.result", "push.notification", "transcript.partial"})
+# (STU-84) in either direction.
+RESERVED_TYPES = frozenset({"tool.call", "tool.result", "push.notification"})
 
 
 class ProtocolError(ValueError):

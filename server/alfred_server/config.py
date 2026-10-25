@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     stt_max_concurrency: int = Field(default=1, ge=1, le=2)
     # Longest utterance accepted, in seconds; longer streams are cut off with an error.
     stt_max_audio_s: float = Field(default=30.0, gt=0)
+    # Partial transcripts while the user speaks: re-decode after this much new audio, in
+    # seconds (each costs one short decode on the GPU). 0 turns partials off.
+    stt_partial_interval_s: float = Field(default=0.4, ge=0)
     # Where models are downloaded; None uses the Hugging Face cache.
     stt_download_root: str | None = None
 

@@ -139,9 +139,14 @@ sealed interface ServerMessage {
         val outputSampleRate: Int,
         /** False when the server has STT or TTS off; turns are then refused. */
         val voice: Boolean,
+        /** The longest utterance the server accepts (`ALFRED_STT_MAX_AUDIO_S`); null from older servers. */
+        val maxAudioSeconds: Double? = null,
     ) : ServerMessage
 
     data class Pong(val t: Double?) : ServerMessage
+
+    /** An interim transcript: [stable] words won't change, the [unstable] tail may. */
+    data class TranscriptPartial(val turnId: String, val stable: String, val unstable: String) : ServerMessage
 
     data class TranscriptFinal(val turnId: String, val text: String) : ServerMessage
 
@@ -192,8 +197,14 @@ fun parseServerMessage(text: String): ServerMessage {
                 inputSampleRate = json.optInt("input_sample_rate", INPUT_SAMPLE_RATE),
                 outputSampleRate = json.optInt("output_sample_rate", OUTPUT_SAMPLE_RATE),
                 voice = json.optBoolean("voice", true),
+                maxAudioSeconds = json.doubleOrNull("max_audio_s"),
             )
             "pong" -> ServerMessage.Pong(json.doubleOrNull("t"))
+            "transcript.partial" -> ServerMessage.TranscriptPartial(
+                json.turnId(),
+                stable = json.stringOrNull("stable").orEmpty(),
+                unstable = json.stringOrNull("unstable").orEmpty(),
+            )
             "transcript.final" -> ServerMessage.TranscriptFinal(json.turnId(), json.getString("text"))
             "reply.text.delta" -> ServerMessage.ReplyTextDelta(json.turnId(), json.getString("text"))
             "reply.audio.start" -> ServerMessage.ReplyAudioStart(

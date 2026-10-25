@@ -20,8 +20,10 @@ from alfred_server.voice import stt as stt_module
 from alfred_server.voice.stt import (
     AudioTooLongError,
     FasterWhisperSTT,
+    Partial,
     pcm16_to_float32,
     resolve_compute_type,
+    split_partial,
 )
 
 AUDIO_DIR = Path(__file__).parent / "fixtures" / "audio"
@@ -231,12 +233,195 @@ def test_concurrent_jobs_are_limited(limit: int) -> None:
     assert model.max_active == limit
 
 
+# --- Partial transcripts -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("hypothesis", "previous", "stable", "expected"),
+    [
+        # First decode: nothing agreed yet.
+        ("set a", "", "", Partial("", "set a")),
+        # Two decodes agree on a prefix: it becomes stable.
+        ("set a timer", "set a", "", Partial("set a", "timer")),
+        # Agreement ignores case and punctuation.
+        ("Set a timer for", "set a timer.", "", Partial("Set a timer", "for")),
+        # Stable words are kept as they were, even if a later decode revises them.
+        (
+            "sat a timer for ten",
+            "sat a timer for",
+            "set a timer",
+            Partial("set a timer for", "ten"),
+        ),
+        # A shorter decode never takes back stable words.
+        ("set", "set a timer", "set a timer", Partial("set a timer", "")),
+        ("", "", "", Partial("", "")),
+    ],
+)
+def test_split_partial(hypothesis: str, previous: str, stable: str, expected: Partial) -> None:
+    assert split_partial(hypothesis, previous, stable) == expected
+
+
+class GrowingModel(FakeModel):
+    """Hears one more word of `words` per decode, like a growing utterance."""
+
+    def __init__(self, words: list[str], delay: float = 0.0) -> None:
+        super().__init__(delay=delay)
+        self.words = words
+
+    def transcribe(self, audio: np.ndarray, **kwargs: Any) -> tuple[Iterable[Any], Any]:
+        self.text = " ".join(self.words[: len(self.calls) + 1])
+        return super().transcribe(audio, **kwargs)
+
+
+async def paced(data: bytes, chunk_size: int, pause: float = 0.01) -> AsyncIterator[bytes]:
+    """Like `stream`, but yields to the event loop between chunks, as a live socket does."""
+    for start in range(0, len(data), chunk_size):
+        yield data[start : start + chunk_size]
+        await asyncio.sleep(pause)
+
+
+CHUNK_100MS = 3200
+SECOND = b"\x01\x00" * 16000
+
+
+def partial_stt(model: FakeModel, interval: float = 0.2) -> FasterWhisperSTT:
+    return FasterWhisperSTT(Settings(_env_file=None, stt_partial_interval_s=interval), model=model)
+
+
+def test_partials_are_reported_while_audio_streams() -> None:
+    model = GrowingModel(["set", "a", "timer", "for", "ten", "minutes"])
+    stt = partial_stt(model)
+    partials: list[Partial] = []
+
+    async def collect(partial: Partial) -> None:
+        partials.append(partial)
+
+    transcript = asyncio.run(stt.transcribe(paced(SECOND, CHUNK_100MS), on_partial=collect))
+
+    # A decode every 0.2 s of audio, then the final one over all of it.
+    assert len(partials) >= 3
+    assert len(model.calls) == len(partials) + 1
+    assert len(model.calls[-1][0]) == 16000
+    # Each partial decodes the audio so far: the buffers grow.
+    sizes = [len(audio) for audio, _ in model.calls]
+    assert sizes == sorted(sizes)
+    # Stable text only ever grows, and is what two decodes in a row agreed on.
+    assert partials[0] == Partial("", "set")
+    stables = [p.stable for p in partials]
+    assert all(b.startswith(a) for a, b in zip(stables, stables[1:], strict=False))
+    assert partials[1] == Partial("set", "a")
+    assert transcript.text == " ".join(model.words[: len(model.calls)])
+
+
+def test_no_partials_when_turned_off_or_not_asked_for() -> None:
+    partials: list[Partial] = []
+
+    async def collect(partial: Partial) -> None:
+        partials.append(partial)
+
+    off = FakeModel()
+    asyncio.run(partial_stt(off, 0).transcribe(paced(SECOND, CHUNK_100MS), on_partial=collect))
+    not_asked = FakeModel()
+    asyncio.run(partial_stt(not_asked).transcribe(paced(SECOND, CHUNK_100MS)))
+
+    assert partials == []
+    assert len(off.calls) == len(not_asked.calls) == 1
+
+
+def test_a_running_partial_finishes_before_the_final_transcript() -> None:
+    # Slow decodes: the audio ends while a partial is still running.
+    model = FakeModel(text="hello there", delay=0.2)
+    events: list[str] = []
+
+    async def collect(partial: Partial) -> None:
+        events.append("partial")
+
+    async def run() -> None:
+        await partial_stt(model).transcribe(stream(SECOND, CHUNK_100MS), on_partial=collect)
+        events.append("final")
+
+    asyncio.run(run())
+
+    # One partial started (the next couldn't while it ran), then the final decode.
+    assert events == ["partial", "final"]
+    assert len(model.calls) == 2
+    assert model.max_active == 1
+
+
+def test_partials_never_wait_for_another_turns_decode() -> None:
+    model = FakeModel(delay=0.3)
+    stt = partial_stt(model)
+    partials: list[Partial] = []
+
+    async def collect(partial: Partial) -> None:
+        partials.append(partial)
+
+    async def run() -> None:
+        # Another turn's final decode holds the only slot while this one streams.
+        other = asyncio.create_task(stt.transcribe(stream(SECOND, CHUNK_100MS)))
+        await asyncio.sleep(0.05)
+        await stt.transcribe(paced(SECOND[:16000], CHUNK_100MS, pause=0.01), on_partial=collect)
+        await other
+
+    asyncio.run(run())
+
+    assert partials == []
+    assert len(model.calls) == 2
+
+
+def test_a_partial_skips_a_slot_taken_after_it_was_scheduled() -> None:
+    model = FakeModel()
+    stt = partial_stt(model)
+    partials: list[Partial] = []
+
+    async def collect(partial: Partial) -> None:
+        partials.append(partial)
+
+    async def run() -> int:
+        decoder = stt_module._PartialDecoder(stt, collect, step_bytes=CHUNK_100MS)
+        decoder.feed(bytearray(SECOND[:6400]))  # scheduled while the slot is free…
+        async with stt._slots:  # …but another turn's decode takes it before the task runs
+            await asyncio.sleep(0.05)
+        retried = decoder._decoded_bytes
+        await decoder.finish()
+        return retried
+
+    retried = asyncio.run(run())
+
+    assert model.calls == []
+    assert partials == []
+    assert retried == 0  # the next feed tries the same audio again
+
+
+def test_a_failed_turn_sends_no_more_partials() -> None:
+    model = FakeModel(delay=0.1)
+    partials: list[Partial] = []
+
+    async def collect(partial: Partial) -> None:
+        partials.append(partial)
+
+    async def too_long() -> None:
+        stt = FasterWhisperSTT(
+            Settings(_env_file=None, stt_partial_interval_s=0.2, stt_max_audio_s=0.25), model=model
+        )
+        with pytest.raises(AudioTooLongError):
+            # The limit is passed while the partial started at 0.2 s is still decoding.
+            await stt.transcribe(paced(SECOND, CHUNK_100MS), on_partial=collect)
+        await asyncio.sleep(0.2)  # the abandoned partial decode finishes meanwhile
+
+    asyncio.run(too_long())
+
+    assert len(model.calls) == 1  # the partial ran, but wasn't sent
+    assert partials == []
+
+
 def test_stt_settings_defaults() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.stt_enabled is False
     assert settings.stt_language == "en"
     assert settings.stt_max_concurrency == 1
+    assert settings.stt_partial_interval_s == 0.4
 
 
 @pytest.mark.parametrize("value", [0, 3])

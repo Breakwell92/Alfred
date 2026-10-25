@@ -400,7 +400,7 @@ class VoiceControllerTest {
     }
 
     @Test
-    fun `push-to-talk ignores silence`() = runVoiceTest {
+    fun `without a detector silence doesn't end a turn`() = runVoiceTest {
         val voice = controller()
         voice.startListening()
         repeat(500) { capture.frames.trySend(ByteArray(640)) }
@@ -457,6 +457,107 @@ class VoiceControllerTest {
 
         assertEquals(VoicePhase.Idle, voice.state.value.phase)
         assertEquals(0f, voice.level.value, 0f)
+    }
+
+    @Test
+    fun `the meter follows each frame`() = runVoiceTest {
+        capture.activeEffects = setOf(CaptureEffect.NoiseSuppression)
+        val voice = controller()
+        voice.startListening()
+        assertEquals(NOW, voice.state.value.listeningSinceMillis)
+
+        capture.frames.send(tone(amplitude = 16_384))
+        val loud = voice.meter.value
+        assertEquals(-6.02f, loud.dbfs, 0.05f)
+        assertEquals(1f, loud.level, 0f)
+        assertTrue(loud.noiseFilter)
+        assertEquals(INPUT_SAMPLE_RATE, loud.sampleRate)
+        capture.frames.send(ByteArray(FRAME_BYTES))
+        assertEquals(MIN_DBFS, voice.meter.value.dbfs, 0f)
+        assertEquals(2L, voice.meter.value.frames)
+
+        // A new turn starts the meter afresh.
+        voice.cancel()
+        voice.startListening()
+        assertEquals(0L, voice.meter.value.frames)
+    }
+
+    @Test
+    fun `partial transcripts show while speaking and give way to the final one`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        val id = turnId()
+
+        connection.receive(ServerMessage.TranscriptPartial(id, stable = "", unstable = "Set a"))
+        connection.receive(ServerMessage.TranscriptPartial(id, stable = "Set a", unstable = "timer"))
+        connection.receive(ServerMessage.TranscriptPartial("other-turn", stable = "nope", unstable = ""))
+        assertEquals("Set a", voice.state.value.partialStable)
+        assertEquals("timer", voice.state.value.partialUnstable)
+
+        voice.stopListening()
+        assertNull(voice.state.value.listeningSinceMillis)
+        connection.receive(ServerMessage.TranscriptFinal(id, "Set a timer for ten minutes."))
+        val state = voice.state.value
+        assertEquals("Set a timer for ten minutes.", state.transcript)
+        assertEquals("", state.partialStable)
+        assertEquals("", state.partialUnstable)
+    }
+
+    @Test
+    fun `a turn is sent when it reaches the server's limit`() = runVoiceTest {
+        connection.state.value = LinkState.Connected("session-1", voice = true, maxAudioSeconds = 10.0)
+        val voice = controller()
+        voice.startListening()
+        val id = turnId()
+
+        advanceTimeBy(9_499)
+        assertEquals(VoicePhase.Listening, voice.state.value.phase)
+        advanceTimeBy(2)
+        assertEquals(VoicePhase.Thinking, voice.state.value.phase)
+        assertEquals(ClientMessage.TurnEnd(id), connection.sent.last())
+    }
+
+    @Test
+    fun `turns are capped at a minute and default to the server's usual limit`() = runVoiceTest {
+        connection.state.value = LinkState.Connected("session-1", voice = true, maxAudioSeconds = 600.0)
+        val voice = controller()
+        voice.startListening()
+        advanceTimeBy(VoiceController.MAX_TURN_MILLIS + 1)
+        assertEquals(VoicePhase.Thinking, voice.state.value.phase)
+
+        connection.state.value = LinkState.Connected("session-1", voice = true)
+        voice.cancel()
+        voice.startListening()
+        advanceTimeBy(VoiceController.DEFAULT_MAX_TURN_MILLIS + 1)
+        assertEquals(VoicePhase.Thinking, voice.state.value.phase)
+    }
+
+    @Test
+    fun `cancelling while listening never sends the turn to the router`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        val id = turnId()
+        capture.frames.send(tone(amplitude = 8_000))
+
+        voice.cancel()
+
+        assertEquals(ClientMessage.TurnCancel(id), connection.sent.last())
+        assertTrue(connection.sent.none { it is ClientMessage.TurnEnd })
+        assertFalse(capture.open)
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertNull(voice.state.value.listeningSinceMillis)
+        // The max-length timer died with the turn.
+        advanceTimeBy(VoiceController.MAX_TURN_MILLIS + 1)
+        assertTrue(connection.sent.none { it is ClientMessage.TurnEnd })
+    }
+
+    /** One 20 ms frame of a square wave at ±[amplitude]. */
+    private fun tone(amplitude: Int): ByteArray = ByteArray(FRAME_BYTES).also { bytes ->
+        for (i in 0 until FRAME_BYTES / 2) {
+            val value = if (i % 2 == 0) amplitude else -amplitude
+            bytes[2 * i] = (value and 0xFF).toByte()
+            bytes[2 * i + 1] = (value shr 8 and 0xFF).toByte()
+        }
     }
 
     private companion object {

@@ -15,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -26,7 +27,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.alfred.app.ui.components.GridBackground
 import com.alfred.app.ui.home.HomeScreen
+import com.alfred.app.ui.recording.RecordingScreen
+import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsScreen
+import org.koin.compose.viewmodel.koinViewModel
 
 enum class Destination(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "Home", Icons.Filled.Home),
@@ -36,7 +40,8 @@ enum class Destination(val route: String, val label: String, val icon: ImageVect
 }
 
 @Composable
-fun AlfredApp() {
+fun AlfredApp(recordingViewModel: RecordingViewModel = koinViewModel()) {
+    val recording by recordingViewModel.state.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
@@ -76,6 +81,11 @@ fun AlfredApp() {
                 composable(Destination.Activity.route) { ActivityScreen() }
                 composable(Destination.Settings.route) { SettingsScreen() }
             }
+        }
+        // Recording is a layer over everything, not a destination (ADR 0021): Home stays
+        // underneath, so a hold-to-talk press that opened it still sends when let go.
+        if (recording.listening) {
+            RecordingScreen(recordingViewModel, Modifier.fillMaxSize())
         }
     }
 }

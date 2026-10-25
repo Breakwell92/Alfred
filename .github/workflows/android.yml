@@ -29,7 +29,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Lint, unit tests and debug build
-        run: ./gradlew lint testDebugUnitTest assembleDebug --console=plain
+        # roborazzi.test.verify: screenshot tests compare against app/src/test/screenshots/.
+        run: ./gradlew lint testDebugUnitTest assembleDebug -Proborazzi.test.verify=true --console=plain
+
+      - name: Upload screenshot diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roborazzi-diffs
+          path: android/app/build/outputs/roborazzi/
+          retention-days: 14
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

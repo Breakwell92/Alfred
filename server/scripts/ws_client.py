@@ -3,7 +3,9 @@
 Plays the part of the phone on `/ws/device` (docs/protocol.md): sends `hello`, streams the WAV
 as one turn, prints the transcript, reply and per-stage timings, and writes the reply audio to
 a 24 kHz WAV. With `--runs N` it repeats the turn (a fresh conversation each time) and reports
-the median end of speech → first audio, as measured here and by the server.
+the median end of speech → first audio, as measured here and by the server. Partial
+transcripts (`transcript.partial`) are printed with when each arrived; use `--realtime` so the
+audio goes up at speaking pace, as from the phone.
 
 Needs the server running with `ALFRED_STT_ENABLED=true` and `ALFRED_TTS_ENABLED=true`. The
 token is `--token`, else `ALFRED_API_TOKEN` (environment or `server/.env`).
@@ -61,17 +63,18 @@ class TurnResult:
     server_timings: dict[str, Any] = field(default_factory=dict)
     error: dict[str, Any] | None = None
     confirmation_id: str | None = None
+    # perf_counter() when audio started going up / when `turn.end` was sent.
+    started: float = 0.0
+    ended: float | None = None
+    # (ms since the first audio frame, stable, unstable) per `transcript.partial`.
+    partials: list[tuple[float, str, str]] = field(default_factory=list)
 
 
-async def read_turn(
-    ws: ClientConnection,
-    turn_id: str | None,
-    ended: float,
-    result: TurnResult,
-) -> None:
+async def read_turn(ws: ClientConnection, turn_id: str | None, result: TurnResult) -> None:
     """Read until the turn ends (`reply.audio.end` or `error`).
 
     `turn_id` None takes audio from any turn (a `confirm.reply` answer's is `confirm-<id>`).
+    Runs while the audio is still being sent, so partial transcripts are timed as they arrive.
     """
     while True:
         frame = await ws.recv()
@@ -79,13 +82,16 @@ async def read_turn(
             tag, pcm = parse_audio_frame(frame)
             if turn_id is not None and tag != turn_id:
                 continue
-            if result.first_audio_ms is None:
-                result.first_audio_ms = (time.perf_counter() - ended) * 1000
+            if result.first_audio_ms is None and result.ended is not None:
+                result.first_audio_ms = (time.perf_counter() - result.ended) * 1000
             result.audio.extend(pcm)
             continue
         msg = json.loads(frame)
         kind = msg["type"]
-        if kind == "transcript.final":
+        if kind == "transcript.partial":
+            at = (time.perf_counter() - result.started) * 1000
+            result.partials.append((at, msg["stable"], msg["unstable"]))
+        elif kind == "transcript.final":
             result.transcript = msg["text"]
         elif kind == "reply.text.delta":
             result.reply += msg["text"]
@@ -125,23 +131,24 @@ async def one_turn(args: argparse.Namespace, pcm: bytes, token: str) -> TurnResu
             sys.exit("the server has STT/TTS off (ALFRED_STT_ENABLED, ALFRED_TTS_ENABLED)")
         turn_id = f"t-{uuid.uuid4().hex[:8]}"
         await ws.send(json.dumps({"type": "turn.start", "turn_id": turn_id}))
+        result = TurnResult(started=time.perf_counter())
+        reader = asyncio.create_task(read_turn(ws, turn_id, result))
         step = int(INPUT_SAMPLE_RATE * CHUNK_S) * 2
         for start in range(0, len(pcm), step):
             await ws.send(pcm[start : start + step])
             if args.realtime:
                 await asyncio.sleep(CHUNK_S)
         await ws.send(json.dumps({"type": "turn.end", "turn_id": turn_id}))
-        ended = time.perf_counter()
-        result = TurnResult()
-        await read_turn(ws, turn_id, ended, result)
+        result.ended = time.perf_counter()
+        await reader
         answer = True if args.approve else False if args.deny else None
         if answer is not None and result.confirmation_id and result.error is None:
             # Like the app's buttons: answered once the asking turn has ended. Its spoken
             # answer is a turn of its own.
             reply = {"type": "confirm.reply", "confirmation_id": result.confirmation_id}
             await ws.send(json.dumps({**reply, "approve": answer}))
-            confirm = TurnResult()
-            await read_turn(ws, None, time.perf_counter(), confirm)
+            confirm = TurnResult(ended=time.perf_counter())
+            await read_turn(ws, None, confirm)
             result.reply += " / " + confirm.reply
             if confirm.error is not None:
                 result.error = confirm.error
@@ -179,6 +186,8 @@ async def main() -> None:
     result = TurnResult()
     for run in range(1, args.runs + 1):
         result = await one_turn(args, pcm, token)
+        for at, stable, unstable in result.partials:
+            print(f"  partial at {at:.0f} ms: {stable!r} + [{unstable!r}]")
         print(f"run {run}: heard {result.transcript!r}")
         if result.error is not None:
             print(f"  error: {result.error['code']}: {result.error['message']}")

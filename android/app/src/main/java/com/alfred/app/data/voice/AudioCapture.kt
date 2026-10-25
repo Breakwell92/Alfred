@@ -21,6 +21,9 @@ import kotlinx.coroutines.isActive
 /** Bytes in one 20 ms frame of 16 kHz mono PCM16. */
 const val FRAME_BYTES = INPUT_SAMPLE_RATE / 50 * 2
 
+/** Android's built-in clean-up on the capture path, where the phone has it. */
+enum class CaptureEffect { NoiseSuppression, EchoCancellation }
+
 /** The microphone, as a stream of 20 ms PCM16 frames at 16 kHz. */
 fun interface AudioCapture {
     /**
@@ -28,6 +31,9 @@ fun interface AudioCapture {
      * [SecurityException] without `RECORD_AUDIO`, [IllegalStateException] if the mic can't open.
      */
     fun frames(): Flow<ByteArray>
+
+    /** The effects actually enabled on the current (or last) recording, for the telemetry row. */
+    val activeEffects: Set<CaptureEffect> get() = emptySet()
 }
 
 class AudioRecordCapture(private val context: Context) : AudioCapture {
@@ -36,6 +42,10 @@ class AudioRecordCapture(private val context: Context) : AudioCapture {
 
     /** Audio session ids of our own open recordings, so other apps' can be told apart. */
     val activeSessionIds: Set<Int> get() = sessions
+
+    @Volatile
+    override var activeEffects: Set<CaptureEffect> = emptySet()
+        private set
 
     override fun frames(): Flow<ByteArray> = flow {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -57,6 +67,14 @@ class AudioRecordCapture(private val context: Context) : AudioCapture {
         val sessionId = record.audioSessionId
         sessions += sessionId
         val effects = attachEffects(sessionId)
+        activeEffects = effects.mapNotNull { effect ->
+            when {
+                !effect.enabled -> null
+                effect is NoiseSuppressor -> CaptureEffect.NoiseSuppression
+                effect is AcousticEchoCanceler -> CaptureEffect.EchoCancellation
+                else -> null
+            }
+        }.toSet()
         try {
             record.startRecording()
             val buffer = ByteArray(FRAME_BYTES)

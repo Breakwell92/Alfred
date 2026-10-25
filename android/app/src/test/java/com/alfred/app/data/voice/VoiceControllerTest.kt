@@ -440,10 +440,30 @@ class VoiceControllerTest {
     }
 
     @Test
+    fun `no speech cancels the turn quietly`() = runVoiceTest {
+        val voice = controller()
+        var frames = 0
+        var noSpeech = 0
+        val started = voice.startListening(
+            endOfSpeech = { if (++frames >= 2) Endpoint.NoSpeech else Endpoint.Continue },
+            onNoSpeech = { noSpeech++ },
+        )
+        assertTrue(started)
+        repeat(2) { capture.frames.trySend(ByteArray(640)) }
+
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertNull(voice.state.value.error)
+        assertEquals(ClientMessage.TurnCancel(turnId()), connection.sent.last())
+        assertFalse(connection.sent.any { it is ClientMessage.TurnEnd })
+        assertEquals(1, noSpeech)
+        assertFalse(capture.open)
+    }
+
+    @Test
     fun `an end-of-speech detector ends a hands-free turn`() = runVoiceTest {
         val voice = controller()
         var frames = 0
-        assertTrue(voice.startListening(endOfSpeech = { ++frames >= 3 }))
+        assertTrue(voice.startListening(endOfSpeech = { if (++frames >= 3) Endpoint.End else Endpoint.Continue }))
         repeat(2) { capture.frames.trySend(ByteArray(640)) }
         assertEquals(VoicePhase.Listening, voice.state.value.phase)
 

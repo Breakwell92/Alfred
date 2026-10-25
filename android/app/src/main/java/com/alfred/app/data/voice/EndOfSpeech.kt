@@ -1,23 +1,37 @@
 package com.alfred.app.data.voice
 
-/**
- * Decides when a hands-free turn has finished, from the mic frames being streamed. Push-to-talk
- * doesn't need one (the button ends the turn). One instance per turn.
- */
-fun interface EndOfSpeechDetector {
-    /** Feeds one PCM16 frame; true once the turn should end (stays true after that). */
-    fun onFrame(pcm: ByteArray): Boolean
+/** What an [EndOfSpeechDetector] makes of the turn so far. */
+enum class Endpoint {
+    /** Keep listening. */
+    Continue,
+
+    /** The speaker has finished (or the turn hit its length limit): send it. */
+    End,
+
+    /** Nobody spoke: cancel the turn quietly instead of sending silence. */
+    NoSpeech,
 }
 
 /**
- * For turns the user starts on screen (push-to-talk, CUT IN): silence after speech ends the turn
- * (the Recording screen's "or go quiet"); nothing does before anyone speaks, and
- * [VoiceController] caps the length.
+ * Decides when a turn being listened to has finished, from the mic frames being streamed. One
+ * instance per turn. Silero VAD ([com.alfred.app.data.voice.vad.SileroEndOfSpeech], ADR 0023)
+ * in the app; [EnergyEndOfSpeech] when the model can't run.
+ */
+fun interface EndOfSpeechDetector {
+    /** Feeds one PCM16 frame. Once it returns something other than [Endpoint.Continue], it keeps returning that. */
+    fun onFrame(pcm: ByteArray): Endpoint
+}
+
+/**
+ * For turns the user starts on screen (push-to-talk, CUT IN), when Silero isn't available or in
+ * tests: silence after speech ends the turn (the Recording screen's "or go quiet"); nothing does
+ * before anyone speaks, and [VoiceController] caps the length. The app uses
+ * [com.alfred.app.data.voice.vad.EndOfSpeechFactory.pushToTalk].
  */
 fun goQuiet(): EndOfSpeechDetector = EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE)
 
 /**
- * A stopgap energy endpointer until Silero VAD (STU-69, ADR 0019). The noise floor is the
+ * An energy endpointer, the fallback when Silero VAD can't load (ADR 0023). The noise floor is the
  * quietest 20 ms frame of the last 3 s, so a steady fan or TV sets its own level; a frame is
  * speech when it's well above that (and above an absolute minimum).
  *
@@ -40,14 +54,14 @@ class EnergyEndOfSpeech(
     private var elapsedMillis = 0
     private var quietMillis = 0
     private var speechMillis = 0
-    private var ended = false
+    private var result = Endpoint.Continue
 
     private val heardSpeech get() = speechMillis >= minSpeechMillis
 
-    override fun onFrame(pcm: ByteArray): Boolean {
-        if (ended) return true
+    override fun onFrame(pcm: ByteArray): Endpoint {
+        if (result != Endpoint.Continue) return result
         val samples = pcm.size / 2
-        if (samples == 0) return false
+        if (samples == 0) return result
         val millis = samples * 1000 / SAMPLE_RATE
         elapsedMillis += millis
         val level = pcm16Rms(pcm)
@@ -62,10 +76,12 @@ class EnergyEndOfSpeech(
         } else {
             quietMillis += millis
         }
-        ended = elapsedMillis >= maxMillis ||
-            (heardSpeech && quietMillis >= silenceMillis) ||
-            (!heardSpeech && elapsedMillis >= noSpeechMillis)
-        return ended
+        result = when {
+            heardSpeech && (quietMillis >= silenceMillis || elapsedMillis >= maxMillis) -> Endpoint.End
+            !heardSpeech && elapsedMillis >= minOf(noSpeechMillis, maxMillis) -> Endpoint.NoSpeech
+            else -> Endpoint.Continue
+        }
+        return result
     }
 
     private companion object {

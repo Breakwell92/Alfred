@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alfred.app.data.voice.DeviceConnection
 import com.alfred.app.data.voice.EndOfSpeechDetector
+import com.alfred.app.data.voice.Endpoint
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.VoiceController
 import com.alfred.app.data.voice.VoicePhase
@@ -20,12 +21,13 @@ data class VoiceUiState(val voice: VoiceState = VoiceState(), val link: LinkStat
  * Push-to-talk on Home. The talk button works both ways: hold it and let go to send (hold to
  * talk), or tap once to start and tap again to send (toggle). Tapping while Alfred is thinking
  * or speaking stops him. A turn also sends itself once the speaker goes quiet ([endOfSpeech],
- * the Recording screen's "or go quiet", ADR 0021), but never while the button is still held:
+ * the Recording screen's "or go quiet", ADR 0021 and 0024), but never while the button is still held:
  * then letting go decides, so a pause to think doesn't cut the request in half.
  */
 class VoiceViewModel(
     private val voice: VoiceController,
     private val connection: DeviceConnection,
+    /** End of speech with no no-speech or length limit ([com.alfred.app.data.voice.vad.EndOfSpeechFactory.pushToTalk]). */
     private val endOfSpeech: () -> EndOfSpeechDetector = ::goQuiet,
 ) : ViewModel() {
 
@@ -48,7 +50,10 @@ class VoiceViewModel(
                 val detector = endOfSpeech()
                 held = true
                 // The inner detector still sees every frame, so its noise floor stays current.
-                pressStartedTurn = voice.startListening { frame -> detector.onFrame(frame) && !held }
+                pressStartedTurn = voice.startListening({ frame ->
+                    val endpoint = detector.onFrame(frame)
+                    if (held) Endpoint.Continue else endpoint
+                })
                 if (!pressStartedTurn) held = false
             }
             VoicePhase.Listening -> voice.stopListening()

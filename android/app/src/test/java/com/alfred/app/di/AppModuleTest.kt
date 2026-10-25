@@ -11,6 +11,9 @@ import com.alfred.app.data.voice.DeviceConnection
 import com.alfred.app.data.voice.DeviceIdRepository
 import com.alfred.app.data.voice.LinkHolds
 import com.alfred.app.data.voice.VoiceController
+import com.alfred.app.data.voice.vad.EndOfSpeechFactory
+import com.alfred.app.data.voice.vad.EndpointLog
+import com.alfred.app.data.voice.vad.VadSettingsRepository
 import com.alfred.app.data.wakeword.WakeEventLog
 import com.alfred.app.data.wakeword.WakeFeedback
 import com.alfred.app.data.wakeword.WakeSignals
@@ -19,8 +22,10 @@ import com.alfred.app.data.wakeword.WakeWordSettingsRepository
 import com.alfred.app.testing.FakeAudioCapture
 import com.alfred.app.testing.FakeAudioPlayer
 import com.alfred.app.testing.FakeDeviceKeys
+import com.alfred.app.testing.FakeEndpointLog
 import com.alfred.app.testing.FakeProfileSettingsRepository
 import com.alfred.app.testing.FakeSettingsRepository
+import com.alfred.app.testing.FakeVadSettingsRepository
 import com.alfred.app.testing.FakeWakeEventLog
 import com.alfred.app.testing.FakeWakeFeedback
 import com.alfred.app.testing.FakeWakeSignals
@@ -30,10 +35,12 @@ import com.alfred.app.ui.home.HomeViewModel
 import com.alfred.app.ui.home.VoiceViewModel
 import com.alfred.app.ui.recording.RecordingViewModel
 import com.alfred.app.ui.settings.SettingsViewModel
+import com.alfred.app.ui.settings.VadSettingsViewModel
 import com.alfred.app.ui.settings.WakeWordSettingsViewModel
 import com.alfred.app.ui.transmitting.TransmittingViewModel
 import org.junit.Rule
 import org.junit.Test
+import org.koin.core.qualifier.named
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 
@@ -58,6 +65,18 @@ class AppModuleTest {
             single<WakeSignals> { FakeWakeSignals() }
             single<WakeFeedback> { FakeWakeFeedback() }
             single<WakeEventLog> { FakeWakeEventLog() }
+            single<VadSettingsRepository> { FakeVadSettingsRepository() }
+            single<EndpointLog> { FakeEndpointLog() }
+            // The real one loads the model from the APK's assets and logs to logcat.
+            single {
+                EndOfSpeechFactory(
+                    get(),
+                    get(),
+                    loadModel = { error("no model in tests") },
+                    scope = get(named(APP_SCOPE)),
+                    logcat = {},
+                )
+            }
         }
         val koin = koinApplication {
             allowOverride(true)
@@ -75,5 +94,7 @@ class AppModuleTest {
         koin.get<WakeWordSettingsViewModel>()
         koin.get<RecordingViewModel>()
         koin.get<TransmittingViewModel>()
+        koin.get<EndOfSpeechFactory>()
+        koin.get<VadSettingsViewModel>()
     }
 }

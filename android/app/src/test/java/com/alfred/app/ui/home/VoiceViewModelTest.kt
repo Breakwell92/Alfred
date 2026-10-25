@@ -3,6 +3,7 @@ package com.alfred.app.ui.home
 import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.settings.AppSettings
 import com.alfred.app.data.voice.ClientMessage
+import com.alfred.app.data.voice.EnergyEndOfSpeech
 import com.alfred.app.data.voice.FRAME_BYTES
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.ServerMessage
@@ -43,7 +44,9 @@ class VoiceViewModelTest {
             scope = backgroundScope,
             ioDispatcher = mainDispatcher.dispatcher,
         )
-        return VoiceViewModel(controller, connection) to controller
+        // The energy endpointer as push-to-talk uses it: no no-speech or length limit.
+        val goQuiet = { EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE) }
+        return VoiceViewModel(controller, connection, goQuiet) to controller
     }
 
     private val phaseOf: (VoiceController) -> VoicePhase = { it.state.value.phase }

@@ -20,6 +20,6 @@ Before voice exists, Dan needs to talk to Alfred by text and see, for each turn,
 ## Consequences
 
 - A new open route must be static, data-free and added to the exception in `CLAUDE.md`. Anything that returns data stays on the protected router.
-- The confirmations panel guesses STU-57's response shape: a list, or `{pending: [...]}`, of items with `id`, `summary`, `tier` and `expires_at`. STU-57 should match that or adjust `chat.js`.
+- The confirmations panel guesses STU-57's response shape: a list, or `{pending: [...]}`, of items with `id`, `summary`, `tier` and `expires_at`. STU-57 (ADR 0013) returns `{pending: [...]}` with those fields. The page sends no `channel`, so the server treats its answers as `text`, and `irreversible` items can only be denied there.
 - Every streamed turn now does one extra storage read (the stored run) before `done`. Before, that read happened only when the reply might be the low-confidence marker.
 - A Telegram bot or the Android chat screen (STU-99) can reuse the same `turn` metadata.

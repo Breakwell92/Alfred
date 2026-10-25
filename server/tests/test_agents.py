@@ -91,6 +91,14 @@ def test_echo_agent_uses_local_main_and_get_time() -> None:
     assert [getattr(t, "__name__", None) for t in agent.tools] == ["get_time"]
 
 
+def test_echo_agent_has_send_test_message_only_when_test_tools_are_enabled() -> None:
+    settings = gateway_settings().model_copy(update={"test_tools_enabled": True})
+    agent = build_echo_agent(ctx(), db=InMemoryDb(), settings=settings)
+
+    assert isinstance(agent.tools, list)
+    assert [getattr(t, "__name__", None) for t in agent.tools] == ["get_time", "send_test_message"]
+
+
 def test_get_time_reports_local_time() -> None:
     result = make_get_time("Europe/London")()
 

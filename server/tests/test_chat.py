@@ -16,11 +16,17 @@ from alfred_server.agents.echo import build_echo_agent
 from alfred_server.chat import (
     agent_db_dependency,
     budget_dependency,
+    confirmation_service_dependency,
     model_factory_dependency,
 )
 from alfred_server.config import Settings
+from alfred_server.confirmations.service import ConfirmationService
+from alfred_server.confirmations.store import ConfirmationStore
+from alfred_server.connectors.registry import default_registry
 from alfred_server.main import create_app
 from alfred_server.models.gateway import CallMetadata, ModelAlias, gateway_model
+from tests.budget_helpers import memory_engine
+from tests.connector_helpers import Clock
 from tests.llm_fakes import (
     FakeProxy,
     completion,
@@ -78,11 +84,16 @@ class ChatHarness:
         self.proxy = FakeProxy()
         self.db = db
         self.budget = FakeBudget()  # cloud off
+        self.clock = Clock()
+        self.confirmations = ConfirmationService(
+            ConfirmationStore(memory_engine()), default_registry(), clock=self.clock
+        )
         self.app = create_app()
         self.app.dependency_overrides[agent_db_dependency] = lambda: self.db
         self.app.dependency_overrides[model_factory_dependency] = lambda: self._model
         # A lambda so tests can swap `self.budget` after the harness is built.
         self.app.dependency_overrides[budget_dependency] = lambda: self.budget
+        self.app.dependency_overrides[confirmation_service_dependency] = lambda: self.confirmations
         self.client = TestClient(self.app)
 
     def _model(self, alias: ModelAlias, metadata: CallMetadata, **kwargs: Any) -> Model:
@@ -136,7 +147,11 @@ def test_what_time_is_it_uses_the_get_time_tool(harness: ChatHarness) -> None:
     response = harness.post("/chat", text="What time is it?", session_id="s1")
 
     assert response.status_code == 200
-    assert response.json() == {"reply": "It's five past two.", "session_id": "s1"}
+    assert response.json() == {
+        "reply": "It's five past two.",
+        "session_id": "s1",
+        "confirmation": None,  # get_time is a read tool: it ran straight away
+    }
     classify, first, second = (harness.proxy.body(i) for i in range(3))
     assert classify["model"] == "local-router"
     assert first["model"] == "local-main"

@@ -2,12 +2,14 @@
 
 from agno.tools import Toolkit
 
-from alfred_server.agents.echo import make_get_time
 from alfred_server.config import get_settings
 from alfred_server.connectors.models import AgnoToolkitSource, Connector, Credentials, ToolMeta
 
 
 def build_time_toolkit(_creds: Credentials) -> Toolkit:
+    # Imported here: the echo agent imports the builtin connectors (for send_test_message).
+    from alfred_server.agents.echo import make_get_time
+
     return Toolkit(name="time", tools=[make_get_time(get_settings().timezone)])
 
 

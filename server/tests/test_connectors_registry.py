@@ -14,7 +14,7 @@ def test_default_registry_has_time_connector() -> None:
     assert time is not None
     assert time.auth_type == "none"
     assert time.specialist == "general"
-    assert [c.id for c in registry.for_specialist("general")] == ["time"]
+    assert [c.id for c in registry.for_specialist("general")] == ["time", "test_messages"]
 
 
 def test_tool_meta_exposes_risk_and_privacy() -> None:

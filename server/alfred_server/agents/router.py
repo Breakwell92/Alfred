@@ -4,6 +4,9 @@ It classifies the request on `local-router`, picks a model (local first; a cloud
 cloud is enabled, the budget service allows it and the task needs it), hands the request to a
 registered specialist on that model, and retries once on cloud if the local model fails.
 Rules and why: docs/decisions/0009-router.md.
+
+Tools that change things are gated (docs/decisions/0013-confirmation-gating.md): a run that
+reaches one pauses, the gate records it and the reply asks for a yes; `resume` continues it.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -24,6 +27,7 @@ from agno.run.agent import (
     RunContentEvent,
     RunErrorEvent,
     RunOutput,
+    RunPausedEvent,
 )
 from agno.run.base import RunStatus
 from pydantic import BaseModel, Field
@@ -41,7 +45,11 @@ from alfred_server.budget.models import (
     Tier,
 )
 from alfred_server.budget.service import PROVIDER_NAMES
-from alfred_server.models.gateway import LOCAL_ALIASES, CallMetadata, ModelAlias
+from alfred_server.confirmations.models import PendingConfirmation
+from alfred_server.confirmations.policy import ToolPolicy, gate_agent
+from alfred_server.confirmations.service import ask_prompt
+from alfred_server.connectors.registry import default_registry
+from alfred_server.models.gateway import LOCAL_ALIASES, MODEL_ALIASES, CallMetadata, ModelAlias
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +152,22 @@ class BudgetGate(Protocol):
     ) -> BudgetDecision: ...
 
 
+class ConfirmationGate(Protocol):
+    """The parts of `ConfirmationService` the router uses (sync: they read Postgres)."""
+
+    def policy(self) -> ToolPolicy: ...
+
+    def create(
+        self,
+        run: RunOutput | RunPausedEvent,
+        *,
+        specialist: str,
+        alias: ModelAlias,
+        ctx: RequestContext,
+        policy: ToolPolicy,
+    ) -> PendingConfirmation: ...
+
+
 @dataclass(frozen=True)
 class ModelChoice:
     """The model a request runs on and why. `announcement` is said before the reply."""
@@ -182,6 +206,8 @@ class RoutedReply:
     reply: str
     route: Route
     run: RunOutput
+    # Set when the run paused before a gated tool: `reply` then asks for the OK.
+    confirmation: PendingConfirmation | None = None
 
 
 @dataclass(frozen=True)
@@ -196,12 +222,14 @@ class Done:
     """The stream finished; `reply` is the whole reply, announcement included.
 
     `tools` names the tool calls the final run made, `metrics` its token counts (if any).
+    `confirmation` is set when the run paused before a gated tool.
     """
 
     reply: str
     route: Route
     tools: tuple[str, ...] = ()
     metrics: RunMetrics | None = None
+    confirmation: PendingConfirmation | None = None
 
 
 @dataclass(frozen=True)
@@ -293,7 +321,7 @@ def _needs_fallback(run: RunOutput) -> bool:
     calls), and never once a tool has done something: a retry would repeat that action, and
     deleting the run would lose its record.
     """
-    if run.status == RunStatus.error:
+    if run.status in (RunStatus.error, RunStatus.paused):
         return False
     if any(not t.tool_call_error for t in run.tools or []):
         return False
@@ -314,11 +342,15 @@ class Router:
         budget: BudgetGate,
         model_factory: ModelFactory,
         db: BaseDb | AsyncBaseDb,
+        gate: ConfirmationGate | None = None,
     ) -> None:
         self.registry = registry
         self.budget = budget
         self.model_factory = model_factory
         self.db = db
+        # Without a gate (some tests) tools are still gated by their declared risk, but a run
+        # that pauses can't be recorded, so it fails.
+        self.gate = gate
 
     # --- Classification --------------------------------------------------------------------
 
@@ -454,10 +486,42 @@ class Router:
 
     # --- Running -----------------------------------------------------------------------------
 
-    def _agent(self, route: Route, choice: ModelChoice, ctx: RequestContext) -> Agent:
+    async def _policy(self) -> ToolPolicy:
+        """Tool tiers for this request. Raises if the overrides can't be read (fail closed)."""
+        if self.gate is None:
+            return ToolPolicy(default_registry())
+        return await asyncio.to_thread(self.gate.policy)
+
+    def _agent(
+        self, route: Route, choice: ModelChoice, ctx: RequestContext, policy: ToolPolicy
+    ) -> Agent:
         metadata = CallMetadata(agent=route.specialist.name, trigger=ctx.device_type)
         model = self.model_factory(choice.alias, metadata)
-        return route.specialist.factory(ctx, model, self.db)
+        return gate_agent(route.specialist.factory(ctx, model, self.db), policy)
+
+    async def _paused(
+        self,
+        run: RunOutput | RunPausedEvent,
+        route: Route,
+        ctx: RequestContext,
+        policy: ToolPolicy,
+    ) -> PendingConfirmation:
+        """Record a run that paused before a gated tool. Raises `AgentRunError` if it can't."""
+        gate = self.gate
+        if gate is None:
+            raise AgentRunError("a run paused for confirmation but there is no gate")
+        try:
+            return await asyncio.to_thread(
+                lambda: gate.create(
+                    run,
+                    specialist=route.specialist.name,
+                    alias=route.choice.alias,
+                    ctx=ctx,
+                    policy=policy,
+                )
+            )
+        except Exception as exc:
+            raise AgentRunError(f"couldn't record the confirmation: {exc}") from exc
 
     @staticmethod
     def _run_metadata(route: Route, choice: ModelChoice) -> dict[str, Any]:
@@ -491,7 +555,8 @@ class Router:
     async def run(self, route: Route, text: str, ctx: RequestContext) -> RoutedReply:
         """Run the request to completion. Raises `AgentRunError` if the run fails."""
         choice = route.choice
-        agent = self._agent(route, choice, ctx)
+        policy = await self._policy()
+        agent = self._agent(route, choice, ctx, policy)
         run = await agent.arun(
             text, session_id=ctx.session_id, metadata=self._run_metadata(route, choice)
         )
@@ -503,10 +568,24 @@ class Router:
                 logger.info("retrying on %s (%s)", fallback.alias, fallback.reason)
                 await self._forget_run(run.run_id)
                 route = Route(route.classification, route.specialist, fallback)
-                agent = self._agent(route, fallback, ctx)
+                agent = self._agent(route, fallback, ctx, policy)
                 run = await agent.arun(
                     text, session_id=ctx.session_id, metadata=self._run_metadata(route, fallback)
                 )
+        return await self._finish(run, route, ctx, policy, announcement)
+
+    async def _finish(
+        self,
+        run: RunOutput,
+        route: Route,
+        ctx: RequestContext,
+        policy: ToolPolicy,
+        announcement: str | None,
+    ) -> RoutedReply:
+        if run.status == RunStatus.paused:
+            confirmation = await self._paused(run, route, ctx, policy)
+            reply = _with_announcement(announcement, ask_prompt(confirmation))
+            return RoutedReply(reply, route, run, confirmation)
         if run.status == RunStatus.error or not isinstance(run.content, str):
             raise AgentRunError(f"agent run failed: {run.content}")
         reply = NOT_SURE_REPLY if _is_marker(run.content) else run.content
@@ -523,7 +602,8 @@ class Router:
         """
         if route.choice.announcement:
             yield Token(route.choice.announcement + " ")
-        attempt = _StreamAttempt()
+        policy = await self._policy()
+        attempt = _StreamAttempt(policy)
         async for item in attempt.run(self, route, route.choice, text, ctx):
             yield item
         if attempt.failed:
@@ -540,12 +620,33 @@ class Router:
                 logger.info("retrying on %s (%s)", fallback.alias, fallback.reason)
                 await self._forget_run(attempt.run_id)
                 route = Route(route.classification, route.specialist, fallback)
-                attempt = _StreamAttempt()
+                attempt = _StreamAttempt(policy)
                 async for item in attempt.run(self, route, fallback, text, ctx):
                     yield item
                 if attempt.failed:
                     yield Failed()
                     return
+
+        if attempt.paused is not None:
+            try:
+                confirmation = await self._paused(attempt.paused, route, ctx, policy)
+            except AgentRunError:
+                logger.exception("stream paused but the confirmation wasn't recorded")
+                yield Failed()
+                return
+            # Text held back before the tool call is dropped; the prompt is what to answer.
+            prompt = ask_prompt(confirmation)
+            yield Token((" " if attempt.sent else "") + prompt)
+            said = "".join(attempt.parts) + " " + prompt if attempt.sent else prompt
+            reply = _with_announcement(announcement, said)
+            # Only tools that ran before the pause; the waiting ones are `confirmation.tools`.
+            ran = tuple(
+                t.tool_name
+                for t in attempt.paused.tools or []
+                if t.tool_name and t.result is not None and not t.requires_confirmation
+            )
+            yield Done(reply, route, ran, attempt.metrics, confirmation)
+            return
 
         reply = attempt.reply()
         if not attempt.sent and reply:  # still held back: the marker, or a very short reply
@@ -555,11 +656,64 @@ class Router:
         metrics = run.metrics if run is not None and run.metrics is not None else attempt.metrics
         yield Done(_with_announcement(announcement, reply), route, tools, metrics)
 
+    # --- Confirmations -------------------------------------------------------------------------
+
+    async def resume(self, confirmation: PendingConfirmation, ctx: RequestContext) -> RoutedReply:
+        """Continue a run the user approved: the gated tools run, then the model replies.
+
+        The caller has already claimed `confirmation` (so it can't be resumed twice). The run
+        continues on the alias it paused on; a cloud alias asks the budget again first and
+        drops to `local-main` if refused. If the continued run reaches another gated tool it
+        pauses again and the reply asks for that one. Raises `AgentRunError` on failure.
+        """
+        specialist = self.registry.get(confirmation.specialist)
+        alias: ModelAlias = (
+            cast(ModelAlias, confirmation.alias)
+            if confirmation.alias in MODEL_ALIASES
+            else "local-main"
+        )
+        choice = ModelChoice(alias, "resume after confirmation")
+        if alias not in LOCAL_ALIASES:
+            decision = await asyncio.to_thread(
+                self.budget.decide,
+                alias,
+                PROMPT_OVERHEAD_TOKENS,
+                EXPECTED_OUTPUT_TOKENS,
+                "auto",
+            )
+            if decision.allowed:
+                choice = ModelChoice(alias, choice.reason, decision.code, decision.tier)
+            else:
+                choice = ModelChoice(
+                    "local-main", "resume after confirmation; budget refused", decision.code
+                )
+        route = Route(Classification(specialist=specialist.name), specialist, choice)
+        policy = await self._policy()
+        agent = self._agent(route, choice, ctx, policy)
+        stored = await agent.aget_run_output(
+            confirmation.run_id, session_id=confirmation.session_id
+        )
+        if not isinstance(stored, RunOutput) or stored.status != RunStatus.paused:
+            raise AgentRunError(f"run {confirmation.run_id} isn't paused any more")
+        requirements = stored.active_requirements
+        for requirement in requirements:
+            if requirement.needs_confirmation:
+                requirement.confirm()
+        run = await agent.acontinue_run(
+            run_id=confirmation.run_id,
+            requirements=requirements,
+            session_id=confirmation.session_id,
+            metadata=self._run_metadata(route, choice),
+        )
+        return await self._finish(run, route, ctx, policy, None)
+
 
 class _StreamAttempt:
     """One streamed run of the specialist, with the marker held back."""
 
-    def __init__(self) -> None:
+    def __init__(self, policy: ToolPolicy) -> None:
+        self.policy = policy
+        self.paused: RunPausedEvent | None = None
         self.held = ""  # text not sent yet because it could still be the marker
         self.sent = False
         self.parts: list[str] = []
@@ -574,7 +728,7 @@ class _StreamAttempt:
     async def run(
         self, router: Router, route: Route, choice: ModelChoice, text: str, ctx: RequestContext
     ) -> AsyncIterator[Token]:
-        self.agent = agent = router._agent(route, choice, ctx)
+        self.agent = agent = router._agent(route, choice, ctx, self.policy)
         self.session_id = ctx.session_id
         try:
             async for event in agent.arun(
@@ -602,6 +756,8 @@ class _StreamAttempt:
                     )
                     self.failed = True
                     return
+                elif isinstance(event, RunPausedEvent):
+                    self.paused = event
                 elif isinstance(event, RunCompletedEvent):
                     self.metrics = event.metrics
                     if isinstance(event.content, str):
@@ -629,6 +785,8 @@ class _StreamAttempt:
 
     async def needs_fallback(self) -> bool:
         """`_needs_fallback` on the stored run (stream events miss invalid tool calls)."""
+        if self.paused is not None:
+            return False
         run = await self.stored_run()
         if run is None:  # can't check its tools: only a bare marker counts
             return _is_marker(self.held)

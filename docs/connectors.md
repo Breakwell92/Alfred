@@ -10,7 +10,7 @@ private each tool is. Code is in `server/alfred_server/connectors/`; the design 
 | Piece | Where | What |
 | --- | --- | --- |
 | `Connector` | `connectors/models.py` | Definition: `id`, `name`, `auth_type`, `scopes`, `tool_source`, `tools` (`ToolMeta`), `specialist`, `oauth`. |
-| `ToolMeta` | `connectors/models.py` | Per tool: `risk` (`read` / `write` / `irreversible`) and `privacy` (`cloud_ok` / `local_only`). Undeclared tools never load. |
+| `ToolMeta` | `connectors/models.py` | Per tool: `risk` (`read` / `write` / `irreversible`), `privacy` (`cloud_ok` / `local_only`) and, for gated tools, `confirm_summary`. Undeclared tools never load. |
 | Tool sources | `connectors/models.py` | `AgnoToolkitSource(factory)`, `McpStdioSource(command, args, env)`, `McpHttpSource(url, headers)`. Factories get decrypted `Credentials`. |
 | `ConnectorRegistry` | `connectors/registry.py` | All definitions; `for_specialist()`, `tool_meta(tool_name)`. |
 | `ConnectorService` | `connectors/service.py` | Status, credentials, OAuth, refresh and `load_tools(specialist)`. Get it with `get_connector_service()`. |
@@ -33,12 +33,26 @@ agent = build_agent("home", ctx=ctx, alias=alias, db=db, tools=tools, ...)
 first, and skips (and logs) a connector whose tools fail to build. Look up a tool's risk or
 privacy with `get_connector_service().tool_meta("tool_name")`.
 
+## Risk and confirmations
+
+The router gates every agent's tools by risk ([ADR 0013](decisions/0013-confirmation-gating.md)):
+`read` tools run straight away, `write` tools pause the run until Dan says yes (by text, voice or
+in the app), and `irreversible` tools until he approves them in the app. Dan can override a
+tool's risk with `PUT /settings/permissions/{connector}/{tool}` `{"risk": ...}`.
+
+Give every `write` or `irreversible` tool a `confirm_summary`: a sentence starting with a verb
+that is formatted with the call's arguments and read back to Dan, e.g.
+`"Send an email to {to}: '{subject}'"`. It's also used in "OK, I won't send an email to …", so
+start it with a capital verb and no full stop. The dummy `test_messages` connector
+(`connectors/builtin/test_messages.py`) is a worked example; set `ALFRED_TEST_TOOLS_ENABLED=true` to give it to the general agent and try the flow in `/ui/chat`.
+
 ## Adding a connector
 
 1. Create `server/alfred_server/connectors/builtin/<name>.py` with a `Connector`.
 2. Add it to `BUILTIN_CONNECTORS` in `connectors/builtin/__init__.py`.
-3. Declare every tool the agent may use in `tools`, with honest `risk` and `privacy`. Tool
-   names must be unique across all connectors (use a prefix such as `spotify_`).
+3. Declare every tool the agent may use in `tools`, with honest `risk` and `privacy`, and a
+   `confirm_summary` for anything not `read`. Tool names must be unique across all
+   connectors (use a prefix such as `spotify_`).
 4. Test it: definition registers, tools load when enabled, undeclared tools are dropped.
 5. Write `docs/connectors/<name>.md`: how to get credentials, scopes, redirect URI.
 

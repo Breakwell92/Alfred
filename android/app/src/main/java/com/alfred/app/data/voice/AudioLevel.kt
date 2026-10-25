@@ -40,6 +40,13 @@ fun pcm16Level(pcm: ByteArray, offset: Int = 0, length: Int = pcm.size - offset)
     dbfsToLevel(rmsToDbfs(pcm16Rms(pcm, offset, length)))
 
 /**
+ * The frame being presented at [nowNanos], extrapolated from an `AudioTimestamp` that saw
+ * [framePosition] presented at [timestampNanos] (both on the `System.nanoTime` clock).
+ */
+fun presentedFrame(framePosition: Long, timestampNanos: Long, nowNanos: Long, sampleRate: Int): Long =
+    (framePosition + (nowNanos - timestampNanos) * sampleRate / 1_000_000_000L).coerceAtLeast(0)
+
+/**
  * Levels of the PCM written to an output track, looked up by playback position: the level is
  * that of what's leaving the speaker now, not of what was just written (which can be up to the
  * track's buffer ahead). One level per [windowFrames] samples; a trailing part-window isn't

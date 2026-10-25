@@ -57,6 +57,14 @@ class AudioLevelTest {
         assertEquals(0f, pcm16Level(sine(50.0)), 0f)
     }
 
+    @Test
+    fun `presented frame is extrapolated from the timestamp at the sample rate`() {
+        assertEquals(1_000L, presentedFrame(1_000, 5_000_000_000, 5_000_000_000, 24_000))
+        // 100 ms after the timestamp, 2 400 more frames have been presented at 24 kHz.
+        assertEquals(3_400L, presentedFrame(1_000, 5_000_000_000, 5_100_000_000, 24_000))
+        assertEquals(0L, presentedFrame(0, 5_000_000_000, 4_900_000_000, 24_000))
+    }
+
     /** One 20 ms frame of a sine (500 Hz is a whole number of cycles in it). */
     private fun sine(peak: Double, hz: Double = 500.0): ByteArray {
         val samples = IntArray(FRAME_BYTES / 2) { i ->

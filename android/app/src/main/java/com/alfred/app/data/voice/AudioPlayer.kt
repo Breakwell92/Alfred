@@ -6,6 +6,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.Build
 import java.io.ByteArrayOutputStream
@@ -26,8 +27,8 @@ interface AudioPlayer {
 
     /**
      * Loudness of the reply as it's heard, 0 to 1 (see [pcm16Level]), updated every 20 ms while
-     * playing; 0 otherwise. Follows the playback position, so it lags [write] by the track's
-     * buffer and moves with the sound.
+     * playing; 0 otherwise. Follows the presented position, so it lags [write] by the track's
+     * buffer and output latency and moves with the sound.
      */
     val level: StateFlow<Float>
 
@@ -48,7 +49,7 @@ interface AudioPlayer {
  * blocking writes never hold up the socket or the UI. Playback starts once [JITTER_MILLIS] of
  * audio is buffered (or on [finish]), which smooths out network jitter between frames. Other
  * audio is ducked while Alfred speaks, and a connected Bluetooth output is preferred. [level] is
- * polled on its own thread from the track's playback head.
+ * polled on its own thread from the track's presentation timestamp.
  */
 class AudioTrackPlayer(context: Context) : AudioPlayer {
 
@@ -85,6 +86,12 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
 
     @Volatile
     private var levelPoll: ScheduledFuture<*>? = null
+
+    @Volatile
+    private var sampleRate = OUTPUT_SAMPLE_RATE
+
+    /** Reused by every poll; only the poller thread touches it. */
+    private val timestamp = AudioTimestamp()
     private var bytesWritten = 0L
     private var bytesPerSecond = OUTPUT_SAMPLE_RATE * 2
 
@@ -167,6 +174,7 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         pending.reset()
         started = false
         bytesWritten = 0
+        this.sampleRate = sampleRate
         levels = PlaybackLevels(sampleRate * LEVEL_WINDOW_MILLIS / 1000)
         levelPoll = poller.scheduleWithFixedDelay(
             ::pollLevel,
@@ -176,16 +184,24 @@ class AudioTrackPlayer(context: Context) : AudioPlayer {
         )
     }
 
-    /** Publishes the level of the audio at the playback head (0 until playback starts). */
+    /** Publishes the level of the audio being heard now (0 until playback starts). */
     private fun pollLevel() {
         val current = track
-        val played = if (current != null && started) {
-            current.runCatching { playbackHeadPosition.toLong() and 0xFFFFFFFFL }.getOrNull()
-        } else {
-            null
-        }
-        _level.value = played?.let(levels::levelAt) ?: 0f
+        val heard = if (current != null && started) current.runCatching(::heardFrame).getOrNull() else null
+        _level.value = heard?.let(levels::levelAt) ?: 0f
     }
+
+    /**
+     * The frame leaving the speaker now. [AudioTrack.getTimestamp] includes the output latency
+     * after the mixer (100–250 ms over Bluetooth); it has nothing for a moment after `play()`,
+     * and then the playback head (which leads what's heard by that latency) stands in.
+     */
+    private fun heardFrame(track: AudioTrack): Long =
+        if (track.getTimestamp(timestamp)) {
+            presentedFrame(timestamp.framePosition, timestamp.nanoTime, System.nanoTime(), sampleRate)
+        } else {
+            track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+        }
 
     private fun stopLevels() {
         levelPoll?.cancel(false)

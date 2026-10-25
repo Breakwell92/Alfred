@@ -84,6 +84,8 @@ def test_two_equally_close_routines_match_neither() -> None:
     [
         ("turn the heating on", "turn the heating off"),
         ("turn the heating off", "turn the heating on"),
+        ("lounge lights on", "lounge lights off"),
+        ("living room lights on", "living room lights off"),
         ("lights up", "lights down"),
         ("unlock everything", "lock everything"),
         ("movie time now", "movie time"),

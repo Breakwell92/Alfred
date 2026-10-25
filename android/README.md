@@ -31,6 +31,8 @@ Needs the Android SDK (`ANDROID_HOME`, or `sdk.dir` in a git-ignored `local.prop
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"   # Windows / Git Bash example
 ./gradlew lint testDebugUnitTest assembleDebug                    # what CI runs
 ./gradlew installDebug                                            # install on a connected phone (adb)
+./gradlew testDebugUnitTest -Proborazzi.test.verify=true          # compare screenshot tests with their goldens (CI does)
+./gradlew recordRoborazziDebug                                    # re-record goldens in app/src/test/screenshots/ after a deliberate UI change
 ```
 
 The orb's debug screen (debug builds only) drives every orb state with fake speech levels:

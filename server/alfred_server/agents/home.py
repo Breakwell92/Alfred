@@ -3,7 +3,8 @@
 Its tools come from the `home_assistant` connector (`specialist="home"`), which the router loads
 per request and appends before gating. Ordinary control runs straight away; `ha_lock`,
 `ha_unlock`, `ha_open_door` and `ha_close_door` pause for an approval in the Alfred app. With
-Home Assistant not connected it has no tools, and says so.
+Home Assistant not connected it has no tools, and says so. Design:
+docs/decisions/0019-home-assistant.md.
 """
 
 from agno.agent import Agent
@@ -37,7 +38,9 @@ HOME_INSTRUCTIONS = [
     "are on?') and names you're unsure of: call ha_get_state and answer from it.",
     "Locks: ha_lock and ha_unlock. Garage doors and gates: ha_open_door and ha_close_door. "
     "Always call them when Dan asks; they wait for his approval in the Alfred app. Never use "
-    "ha_turn_on or ha_turn_off for locks or garage doors. You can't arm or disarm the alarm.",
+    "ha_turn_on or ha_turn_off for locks or garage doors. If one of those four tools fails or "
+    "finds nothing, tell Dan and stop: never retry it with ha_turn_on or ha_turn_off (for "
+    "example as a switch). You can't arm or disarm the alarm.",
     "Reply with one short spoken sentence saying what changed or what the state is, e.g. "
     "'The lounge lights are at 40 percent.' If a tool says something went wrong, say that "
     "plainly.",

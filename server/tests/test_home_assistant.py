@@ -22,6 +22,7 @@ from alfred_server.connectors.builtin.home_assistant import (
     DOOR_HINT,
     HOME_ASSISTANT_CONNECTOR,
     NOT_CONFIGURED,
+    RELAY_HINT,
     SAFE_COVER_CLASSES,
     SECURE_COVER_CLASSES,
     SIGNED_OUT,
@@ -86,6 +87,36 @@ def test_ordinary_switching_never_moves_garage_doors(
 
     assert reply == DOOR_HINT
     assert ha.calls == []
+
+
+@pytest.mark.parametrize("domain", ["switch", "input_boolean"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"name": "garage door"},
+        {"name": "Garage"},
+        {"name": "front door relay"},
+        {"name": "backdoor lock"},
+        {"name": "gate opener"},
+        {"name": "alarm"},
+        {"area": "garage"},
+    ],
+)
+def test_switches_never_drive_locks_or_doors_wired_as_relays(
+    ha: FakeHomeAssistant, domain: str, target: dict[str, str]
+) -> None:
+    # "Open the garage": ha_open_door matched no cover, so the model tries the relay instead.
+    tools = ha.tools()
+    for tool in (tools.ha_turn_on, tools.ha_turn_off):
+        assert run(tool(domain, **target)) == RELAY_HINT  # type: ignore[arg-type]
+
+    assert ha.calls == []
+
+
+def test_ordinary_switches_still_work(ha: FakeHomeAssistant) -> None:
+    run(ha.tools().ha_turn_on("switch", name="kettle", area="kitchen"))
+
+    assert ha.calls == [("HassTurnOn", {"name": "kettle", "area": "kitchen", "domain": ["switch"]})]
 
 
 def test_covers_without_a_class_are_limited_to_blinds_and_curtains(ha: FakeHomeAssistant) -> None:

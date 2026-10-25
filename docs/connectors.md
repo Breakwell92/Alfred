@@ -78,7 +78,7 @@ Connectors so far: [Spotify](connectors/spotify.md) (OAuth2, own async Web API t
 When an MCP server's tools are too generic to give one honest risk (Home Assistant's
 `HassTurnOn` switches lights and unlocks doors alike), wrap them in an Agno toolkit of your own
 whose tools each call the server with the risky arguments pinned, rather than exposing the
-server's tools directly ([ADR 0017](decisions/0017-home-assistant.md)).
+server's tools directly ([ADR 0019](decisions/0019-home-assistant.md)).
 
 ### Worked example: the `time` connector
 

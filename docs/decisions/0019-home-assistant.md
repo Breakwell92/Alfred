@@ -1,4 +1,4 @@
-# 0017: Home Assistant connector and the Home specialist
+# 0019: Home Assistant connector and the Home specialist
 
 - **Status:** accepted
 - **Date:** 2026-10-25
@@ -50,5 +50,10 @@ Its classifier description is deliberately short: "lights, heating, blinds, door
 - Adding an HA capability (media players, vacuum, timers) means a new `ha_*` tool with its own risk, not a wider `ha_turn_on`.
 - HA's argument names come from its Assist API (`name`, `area`, `floor`, `domain` and `device_class` as lists). If HA changes them, the tools need updating. The unit tests use a fake MCP server, so this needs Dan's check against the real HA.
 - `ha_get_state` returns the whole live context. In a big house that's a long tool result for the local model. Truncation keeps it bounded, but filtering by area may be needed later.
+- Locks and garage openers are often wired as relays (`switch.garage_door`). A switch call would run one without approval, and a model whose `ha_open_door` found no garage cover tends to retry with the switch. So:
+  - `ha_turn_on`/`off` refuse `switch` and `input_boolean` calls whose name or area contains lock, door, gate, garage or alarm. Matching is by substring, so `clock` is refused too.
+  - The agent is told never to fall back to them when a lock or door tool fails.
+  - The setup doc says to expose only the proper `lock`/`cover` entity, never the relay.
+  The name check is only a backstop: a relay called "opener" in the hall would still pass it.
 - Scenes and switches run without asking, and HA runs whatever they do. A scene that sets a lock state, or a switch an automation watches, would bypass the lock tools' approval. `docs/connectors/home-assistant.md` says not to expose such scenes, and Dan can tighten `ha_turn_on` if he wants scenes to ask.
 - Named rooms (STU-78) and Samsung TVs through HA (STU-77) build on this specialist.

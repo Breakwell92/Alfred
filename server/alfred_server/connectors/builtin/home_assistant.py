@@ -10,7 +10,7 @@ whatever name the model passes, and locks and garage doors get their own `irreve
 
 Every call opens a fresh MCP session, so nothing goes stale when HA restarts. Every tool answers
 with a short sentence the home agent can say, errors included, and never raises. Setup:
-docs/connectors/home-assistant.md. Why: docs/decisions/0017-home-assistant.md.
+docs/connectors/home-assistant.md. Why: docs/decisions/0019-home-assistant.md.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Literal, Protocol, get_args
 
 import httpx2
@@ -62,6 +63,16 @@ DOOR_HINT = (
     "Garage doors, gates and doors use ha_open_door and ha_close_door, which need approval in "
     "the Alfred app."
 )
+# Garage openers and locks are often wired as relays (`switch.garage_door`), which a switch call
+# would run without approval. Switch-like calls naming one of these are refused (a backstop:
+# the setup doc also says never to expose such switches).
+RELAY_DOMAINS = frozenset({"switch", "input_boolean"})
+# Substrings, not words, so "backdoor" and "garagedoor" count too (and, harmlessly, "clock").
+SECURE_WORDS = re.compile(r"lock|door|gate|garage|alarm", re.I)
+RELAY_HINT = (
+    "That sounds like a lock, door, gate or alarm. I won't switch it directly: ha_lock, "
+    "ha_unlock, ha_open_door and ha_close_door handle those, with approval in the Alfred app."
+)
 MIN_TEMPERATURE_C = 5.0
 MAX_TEMPERATURE_C = 30.0
 
@@ -79,7 +90,7 @@ class HomeAssistantClient(Protocol):
 
 
 class HomeAssistantMcp:
-    """Calls one HA MCP tool per session. `http_client` (tests) replaces the default client."""
+    """Calls one HA MCP tool per session, on a fresh HTTP client each time."""
 
     def __init__(
         self,
@@ -88,16 +99,14 @@ class HomeAssistantMcp:
         *,
         timeout_s: float = 10.0,
         retry_delay_s: float = RETRY_DELAY_S,
-        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self.url = base_url.rstrip("/") + MCP_PATH
         self._token = token
         self._timeout_s = timeout_s
         self._retry_delay_s = retry_delay_s
-        self._http_client = http_client
 
     def _client(self, refused: list[int]) -> httpx2.AsyncClient:
-        client = self._http_client or create_mcp_http_client(
+        client = create_mcp_http_client(
             headers={"Authorization": f"Bearer {self._token}"},
             timeout=httpx2.Timeout(self._timeout_s),
         )
@@ -230,6 +239,8 @@ class HomeAssistantTools(Toolkit):
         args = _targets(name, area, floor)
         if not args:
             return "Which device or room?"
+        if domain in RELAY_DOMAINS and any(SECURE_WORDS.search(v) for v in args.values()):
+            return RELAY_HINT
         args["domain"] = [domain]
         if domain == "cover":
             if device_class in SECURE_COVER_CLASSES:

@@ -1,6 +1,6 @@
 # Home Assistant
 
-Connector id `home_assistant` (`server/alfred_server/connectors/builtin/home_assistant.py`), used by the `home` specialist. Design: [ADR 0017](../decisions/0017-home-assistant.md).
+Connector id `home_assistant` (`server/alfred_server/connectors/builtin/home_assistant.py`), used by the `home` specialist. Design: [ADR 0019](../decisions/0019-home-assistant.md).
 
 Alfred talks to Home Assistant's MCP server and only ever calls HA's intents through its own `ha_*` tools, each limited to fixed device domains. Lights, heating, blinds and scenes run straight away. Locks and garage doors wait for an approval in the paired Alfred app.
 
@@ -54,7 +54,9 @@ If a tool says Home Assistant isn't reachable, check the URL from the server: `c
 
 Not available: arming or disarming the alarm (HA's Assist API has no intent for it), valves, scripts, and anything not exposed to Assist.
 
-**Don't expose a scene (or a switch that triggers an automation) that locks, unlocks or opens anything.** Scenes run without asking, and HA does whatever the scene contains, so it would bypass the approval the lock and garage tools need. To make ordinary control ask first, tighten it: `PUT /settings/permissions/home_assistant/ha_turn_on {"risk": "write"}`.
+**Don't expose to Assist any switch or input_boolean that directly drives a lock, door, gate or alarm** (e.g. a Shelly or Sonoff relay on the garage opener showing up as `switch.garage_door`). Expose only the proper `lock` or `cover` entity, with the right device class: a template or wrapper cover over the relay if need be. Switches run without asking, so a relay would bypass the approval the lock and garage tools need. Alfred also refuses switch calls whose name or room mentions a lock, door, gate, garage or alarm, but that is only a backstop.
+
+**Likewise, don't expose a scene (or a switch that triggers an automation) that locks, unlocks or opens anything.** Scenes run without asking, and HA does whatever the scene contains. To make ordinary control ask first, tighten it: `PUT /settings/permissions/home_assistant/ha_turn_on {"risk": "write"}`.
 
 ## Recovery
 

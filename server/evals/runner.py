@@ -12,6 +12,10 @@ goes to cloud unless `allow_cloud` is set, and then only when the real budget se
   the budget service first.
 - otherwise: the run uses the router's own choice under the run budget (cloud off, or the real
   budget service with `allow_cloud`), cloud fallback included.
+
+Tools are gated as in production (docs/decisions/0013-confirmation-gating.md), with an
+in-memory confirmation store: a `write`/`irreversible` call pauses the run, nothing is ever
+approved, and the calls it paused for are scored like any other tool call.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from typing import Any, cast
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.in_memory import InMemoryDb
 from agno.models.base import Model
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.registry import Specialist, SpecialistRegistry
@@ -39,6 +45,9 @@ from alfred_server.agents.router import (
     estimate_prompt_tokens,
 )
 from alfred_server.budget.models import BudgetDecision, EscalationReason
+from alfred_server.confirmations.service import ConfirmationService
+from alfred_server.confirmations.store import ConfirmationStore
+from alfred_server.connectors.registry import default_registry
 from alfred_server.models.gateway import (
     LOCAL_ALIASES,
     MODEL_ALIASES,
@@ -236,6 +245,11 @@ class EvalRunner:
         self.model_factory = model_factory
         self.clock = clock
         self.db = InMemoryDb()
+        # Records pauses before gated tools, in memory; nothing is ever approved.
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        self.gate = ConfirmationService(ConfirmationStore(engine), default_registry())
         self._runs = 0
 
     async def _forced_choice(self, alias: ModelAlias, text: str, c: Classification) -> ModelChoice:
@@ -260,7 +274,7 @@ class EvalRunner:
         result = CaseResult(case.id, alias=self.model_alias or "router")
         # Runs: cloud off, or the real budget with --allow-cloud. A forced alias is run alone.
         run_budget = CloudOffBudget() if self.model_alias is not None else self.budget
-        router = Router(self.registry, run_budget, self.model_factory, self.db)
+        router = Router(self.registry, run_budget, self.model_factory, self.db, self.gate)
         # Decides only (nothing runs on it): where the router would send the request.
         selector = Router(self.registry, AllowAllBudget(), self.model_factory, self.db)
 
@@ -284,6 +298,15 @@ class EvalRunner:
             route = Route(classification, _mocked(specialist, tools), choice)
             reply = await router.run(route, case.input, ctx)
             result.reply = reply.reply
+            if reply.confirmation is not None:
+                # The gated calls didn't run (no hook call), but the model made them.
+                for requirement in reply.run.active_requirements:
+                    te = requirement.tool_execution
+                    if te is not None and te.tool_name:
+                        args = dict(te.tool_args or {})
+                        tools.calls.append(
+                            ToolCall(te.tool_name, args, te.tool_name in self.fixtures)
+                        )
             metrics = reply.run.metrics
             if metrics is not None:
                 result.input_tokens = metrics.input_tokens

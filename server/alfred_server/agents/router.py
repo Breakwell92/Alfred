@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -49,7 +49,7 @@ from alfred_server.confirmations.models import PendingConfirmation
 from alfred_server.confirmations.policy import ToolPolicy, gate_agent
 from alfred_server.confirmations.service import ask_prompt
 from alfred_server.connectors.registry import default_registry
-from alfred_server.models.gateway import LOCAL_ALIASES, CallMetadata, ModelAlias
+from alfred_server.models.gateway import LOCAL_ALIASES, MODEL_ALIASES, CallMetadata, ModelAlias
 
 logger = logging.getLogger(__name__)
 
@@ -667,19 +667,22 @@ class Router:
         pauses again and the reply asks for that one. Raises `AgentRunError` on failure.
         """
         specialist = self.registry.get(confirmation.specialist)
-        choice = ModelChoice(confirmation.alias, "resume after confirmation")
-        if confirmation.alias not in LOCAL_ALIASES:
+        alias: ModelAlias = (
+            cast(ModelAlias, confirmation.alias)
+            if confirmation.alias in MODEL_ALIASES
+            else "local-main"
+        )
+        choice = ModelChoice(alias, "resume after confirmation")
+        if alias not in LOCAL_ALIASES:
             decision = await asyncio.to_thread(
                 self.budget.decide,
-                confirmation.alias,
+                alias,
                 PROMPT_OVERHEAD_TOKENS,
                 EXPECTED_OUTPUT_TOKENS,
                 "auto",
             )
             if decision.allowed:
-                choice = ModelChoice(
-                    confirmation.alias, choice.reason, decision.code, decision.tier
-                )
+                choice = ModelChoice(alias, choice.reason, decision.code, decision.tier)
             else:
                 choice = ModelChoice(
                     "local-main", "resume after confirmation; budget refused", decision.code

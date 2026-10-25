@@ -35,7 +35,9 @@ Every connector tool declares a `risk` (ADR 0010): `read` changes nothing, `writ
 
 **Unattended runs** (`scheduled`) are never auto-approved. The run pauses, a `notifications` row is written (push delivery is STU-84), and it waits `ALFRED_CONFIRMATION_SCHEDULED_TTL_S` (1 h) for Dan.
 
-**Demo tool.** The `test_messages` builtin connector's `send_test_message` (`write`) only appends to an in-process list. The general (echo) agent has it, so the whole flow can be tried through `/chat` and the web chat page.
+**Demo tool.** The `test_messages` builtin connector's `send_test_message` (`write`) only appends to an in-process list. With `ALFRED_TEST_TOOLS_ENABLED=true` the general (echo) agent has it, so the whole flow can be tried through `/chat` and the web chat page. It's off by default: the smoke evals showed that a second tool and its instruction make `local-router` stop calling `get_time` on time questions (0/20 runs against 7/20 without it). The reply was still right, taken from the request context.
+
+**Evals** run with an in-memory gate: a gated call pauses, is never approved, and is scored as a tool call.
 
 ## Consequences
 

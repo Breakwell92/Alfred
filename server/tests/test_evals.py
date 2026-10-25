@@ -213,6 +213,30 @@ def test_runner_answers_tools_from_fixtures() -> None:
     assert r.total_ms >= r.route_ms > 0
 
 
+def test_runner_scores_a_gated_call_without_running_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    from alfred_server.connectors.builtin.test_messages import SENT_TEST_MESSAGES
+
+    monkeypatch.setenv("ALFRED_TEST_TOOLS_ENABLED", "true")
+    SENT_TEST_MESSAGES.clear()
+    args = {"recipient": "Sam", "text": "Running late"}
+    h = Harness(
+        route_completion(),
+        tool_call_completion("send_test_message", args),
+        model_alias="eval-candidate",
+    )
+    c = case(
+        input="Text Sam that I'm running late.", expected_tools=[{"name": "send_test_message"}]
+    )
+
+    r = asyncio.run(h.runner.run_case(c))
+
+    assert r.passed, r.failures
+    assert r.reply is not None and r.reply.startswith("I need your OK first")
+    assert [t.name for t in r.tool_calls] == ["send_test_message"]
+    assert r.tool_calls[0].args == args
+    assert SENT_TEST_MESSAGES == []  # paused, never approved
+
+
 def test_runner_scores_where_router_wants_but_runs_locally() -> None:
     h = Harness(route_completion(level="complex"), reply("A poem."))
 

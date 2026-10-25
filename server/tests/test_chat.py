@@ -155,7 +155,7 @@ def test_what_time_is_it_uses_the_get_time_tool(harness: ChatHarness) -> None:
     classify, first, second = (harness.proxy.body(i) for i in range(3))
     assert classify["model"] == "local-router"
     assert first["model"] == "local-main"
-    assert [t["function"]["name"] for t in first["tools"]] == ["get_time", "send_test_message"]
+    assert [t["function"]["name"] for t in first["tools"]] == ["get_time"]
     tool_result = second["messages"][-1]
     assert tool_result["role"] == "tool"
     assert re.search(r"\d\d:\d\d on \w+day \d+ \w+ \d{4} \(Europe/London\)", tool_result["content"])

@@ -44,7 +44,7 @@ Give every `write` or `irreversible` tool a `confirm_summary`: a sentence starti
 that is formatted with the call's arguments and read back to Dan, e.g.
 `"Send an email to {to}: '{subject}'"`. It's also used in "OK, I won't send an email to …", so
 start it with a capital verb and no full stop. The dummy `test_messages` connector
-(`connectors/builtin/test_messages.py`) is a worked example.
+(`connectors/builtin/test_messages.py`) is a worked example; set `ALFRED_TEST_TOOLS_ENABLED=true` to give it to the general agent and try the flow in `/ui/chat`.
 
 ## Adding a connector
 

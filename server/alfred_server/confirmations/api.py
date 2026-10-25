@@ -38,7 +38,7 @@ class ConfirmationAnswer(BaseModel):
     # Where the answer comes from. Only the Alfred app's own confirmation screen should send
     # `app_ui`; it's the only channel that can approve an `irreversible` tool. NOT
     # authenticated: it's asserted by the client, and any holder of the shared API token can
-    # claim it. Binding it to the app is STU-109 (ADR 0012).
+    # claim it. Binding it to the app is STU-109 (ADR 0013).
     channel: Literal["text", "app_ui"] = "text"
 
 

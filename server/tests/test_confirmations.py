@@ -30,6 +30,7 @@ DENIED = "OK, I won't send a test message to Sam: 'Running 10 mins late'."
 @pytest.fixture
 def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ChatHarness:
     monkeypatch.setenv("ALFRED_API_TOKEN", TOKEN)
+    monkeypatch.setenv("ALFRED_TEST_TOOLS_ENABLED", "true")
     return ChatHarness(RecordingDb(tmp_path / "agno.db"))
 
 

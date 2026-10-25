@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from alfred_server.agents.context import DeviceType
 from alfred_server.connectors.models import Risk
-from alfred_server.models.gateway import ModelAlias
 
 # A tool's tier is its connector risk (or Dan's override): `read` runs straight away, `write`
 # needs a yes on any attended channel, `irreversible` only an approval in the app.
@@ -49,7 +48,9 @@ class PendingConfirmation(BaseModel):
     run_id: str
     session_id: str
     specialist: str
-    alias: ModelAlias
+    # The model the run paused on. Usually a `ModelAlias`; evals also run on proxy model names
+    # (`eval-candidate`), which `Router.resume` replaces with `local-main`.
+    alias: str
     tools: list[str]
     summary: str
     tier: Tier

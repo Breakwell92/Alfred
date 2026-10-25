@@ -136,6 +136,7 @@ def test_ask_claude_uses_cloud_claude(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_send_test_message_waits_for_yes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALFRED_TEST_TOOLS_ENABLED", "true")
     client = Client(monkeypatch)
     SENT_TEST_MESSAGES.clear()
 

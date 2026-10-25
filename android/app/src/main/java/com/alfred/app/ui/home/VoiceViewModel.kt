@@ -27,6 +27,9 @@ class VoiceViewModel(
     val state: StateFlow<VoiceUiState> = combine(voice.state, connection.state, ::VoiceUiState)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), VoiceUiState())
 
+    /** The orb's level (mic while listening, reply while speaking); separate as it changes every 20 ms. */
+    val level: StateFlow<Float> = voice.level
+
     /** Whether the press now down started the turn (so a long hold's release sends it). */
     private var pressStartedTurn = false
 

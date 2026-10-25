@@ -13,9 +13,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -73,6 +78,25 @@ class VoiceController(
 ) {
     private val _state = MutableStateFlow(VoiceState())
     val state: StateFlow<VoiceState> = _state.asStateFlow()
+
+    /** Level of the mic frame last captured (see [pcm16Level]); 0 while the mic is closed. */
+    private val micLevel = MutableStateFlow(0f)
+
+    /**
+     * Loudness for the orb, 0 to 1: the mic while listening, the reply as it's heard while
+     * speaking, else 0. Kept out of [state] because it changes every 20 ms.
+     */
+    val level: StateFlow<Float> = combine(
+        _state.map { it.phase }.distinctUntilChanged(),
+        micLevel,
+        player.level,
+    ) { phase, mic, playback ->
+        when (phase) {
+            VoicePhase.Listening -> mic
+            VoicePhase.Speaking -> playback
+            VoicePhase.Idle, VoicePhase.Thinking -> 0f
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, 0f)
 
     /** The turn whose messages and audio we take; anything for another turn is dropped. */
     private var turnId: String? = null
@@ -132,6 +156,7 @@ class VoiceController(
         captureJob = scope.launch {
             try {
                 capture.frames().collect { frame ->
+                    micLevel.value = pcm16Level(frame)
                     connection.sendAudio(frame)
                     if (endOfSpeech?.onFrame(frame) == true && turnId == id) stopListening()
                 }
@@ -139,6 +164,8 @@ class VoiceController(
                 throw e
             } catch (e: Exception) {
                 if (turnId == id) failTurn(micError(e), cancelOnServer = true)
+            } finally {
+                micLevel.value = 0f
             }
         }
         return true

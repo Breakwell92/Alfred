@@ -10,7 +10,7 @@ The orb is Alfred's "face": large on Home (STU-114), smaller on the Transmitting
 
 ## Decision
 
-**API (`ui/orb/`).** `AlfredOrb(state, modifier, level, size, showGuides, channelLabel)`. `OrbSize.Large` (278 dp square, ring radius 125 dp) and `OrbSize.Small` (204 dp, ring 90 dp) were measured from the design at 2 px per dp. `showGuides` defaults to on for `Large` only. `level` is 0 to 1: the mic level while listening, the playback level while speaking. The screens compute it. `AudioCapture` and `AudioPlayer` don't expose a level yet (see Consequences).
+**API (`ui/orb/`).** `AlfredOrb(state, modifier, level, size, showGuides, channelLabel)`. `OrbSize.Large` (278 dp square, ring radius 125 dp) and `OrbSize.Small` (204 dp, ring 90 dp) were measured from the design at 2 px per dp. `showGuides` defaults to on for `Large` only. `level` is 0 to 1: the mic level while listening, the playback level while speaking. The screens take it from `VoiceController.level` (see Consequences).
 
 **Animation model.** `OrbMotion` is plain Kotlin with no Compose, so it is unit-tested (`OrbMotionTest`).
 - Each `OrbState` has a weight that eases between 0 and 1 (time constant 0.25 s). Every animated value is the weighted mix of the states' values, so a state change blends instead of cutting.
@@ -34,8 +34,6 @@ The orb is Alfred's "face": large on Home (STU-114), smaller on the Transmitting
 ## Consequences
 
 - Measured on a Galaxy S25 (SM-S931B, 120 Hz) running the debug screen with `dumpsys gfxinfo`, about 8 s per state. The p99 frame time was 11 ms in every state, with 0 or 1 janky frames out of about 975 and a GPU p99 of 7 ms or less. A mid-range phone is still to be checked (STU-113, "Needs Dan to verify").
-- STU-114 and STU-116 still need a level source:
-  - **Listening:** RMS of `AudioCapture` frames.
-  - **Speaking:** RMS of the PCM written to `AudioPlayer`. The level should be delayed by the track's latency so the core moves with what is heard.
+- The level source is `VoiceController.level` (also `VoiceViewModel.level`), added in STU-125; see [ADR 0017](0017-android-voice-client.md), "Levels". Screens pass it straight to `level`: the orb does its own smoothing, so the source isn't smoothed.
 - The channel label is drawn outside the orb's square to the upper right. Give the orb room there if a parent clips.
 - `OrbSize.Small` has a bigger core (42 dp) than `Large` (34 dp) on purpose. That matches the design's Transmitting orb.

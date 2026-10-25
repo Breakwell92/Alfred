@@ -97,4 +97,17 @@ class VoiceViewModelTest {
         assertEquals(LinkState.Waiting("down", 2_000), vm.state.value.link)
         assertEquals(VoicePhase.Idle, vm.state.value.voice.phase)
     }
+
+    @Test
+    fun `level comes from the controller`() = runTest(mainDispatcher.dispatcher) {
+        val (vm, voice) = viewModel()
+        vm.onTalkPressed()
+        vm.onTalkReleased(heldMillis = 1_500)
+        connection.receive(ServerMessage.ReplyAudioStart((connection.sent.first() as ClientMessage.TurnStart).turnId, 24_000))
+
+        player.level.value = 0.4f
+
+        assertEquals(VoicePhase.Speaking, phaseOf(voice))
+        assertEquals(0.4f, vm.level.value, 0f)
+    }
 }

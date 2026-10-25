@@ -1,7 +1,5 @@
 package com.alfred.app.data.voice
 
-import kotlin.math.sqrt
-
 /**
  * Decides when a hands-free turn has finished, from the mic frames being streamed. Push-to-talk
  * doesn't need one (the button ends the turn). One instance per turn.
@@ -45,7 +43,7 @@ class EnergyEndOfSpeech(
         if (samples == 0) return false
         val millis = samples * 1000 / SAMPLE_RATE
         elapsedMillis += millis
-        val level = rms(pcm, samples)
+        val level = pcm16Rms(pcm)
         // Digital silence (the recorder starting up) says nothing about the room's noise.
         if (level >= 1.0) recent[frames++ % FLOOR_WINDOW_FRAMES] = level
         var floor = Double.MAX_VALUE
@@ -61,15 +59,6 @@ class EnergyEndOfSpeech(
             (heardSpeech && quietMillis >= silenceMillis) ||
             (!heardSpeech && elapsedMillis >= noSpeechMillis)
         return ended
-    }
-
-    private fun rms(pcm: ByteArray, samples: Int): Double {
-        var sum = 0.0
-        for (i in 0 until samples) {
-            val v = ((pcm[2 * i].toInt() and 0xFF) or (pcm[2 * i + 1].toInt() shl 8)).toShort().toDouble()
-            sum += v * v
-        }
-        return sqrt(sum / samples)
     }
 
     private companion object {

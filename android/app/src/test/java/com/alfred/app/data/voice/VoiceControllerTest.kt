@@ -407,6 +407,58 @@ class VoiceControllerTest {
         assertEquals(VoicePhase.Listening, voice.state.value.phase)
     }
 
+    @Test
+    fun `level follows the mic while listening`() = runVoiceTest {
+        val voice = controller()
+        val loud = pcm(*IntArray(160) { if (it % 2 == 0) 20_000 else -20_000 })
+        val quiet = pcm(*IntArray(160) { if (it % 2 == 0) 400 else -400 })
+        assertEquals(0f, voice.level.value, 0f)
+
+        voice.startListening()
+        capture.frames.send(loud)
+        assertEquals(pcm16Level(loud), voice.level.value, 0f)
+        assertEquals(1f, voice.level.value, 0f)
+        capture.frames.send(quiet)
+        assertEquals(pcm16Level(quiet), voice.level.value, 0f)
+
+        voice.stopListening()
+        assertEquals("the mic level drops when the mic closes", 0f, voice.level.value, 0f)
+    }
+
+    @Test
+    fun `level follows playback while speaking, and only then`() = runVoiceTest {
+        val voice = controller()
+        player.level.value = 0.7f
+        assertEquals("idle ignores the player", 0f, voice.level.value, 0f)
+
+        voice.startListening()
+        voice.stopListening()
+        assertEquals("thinking is 0", 0f, voice.level.value, 0f)
+
+        connection.receive(ServerMessage.ReplyAudioStart(turnId(), 24_000))
+        assertEquals(VoicePhase.Speaking, voice.state.value.phase)
+        assertEquals(0.7f, voice.level.value, 0f)
+        player.level.value = 0.2f
+        assertEquals(0.2f, voice.level.value, 0f)
+
+        voice.cancel()
+        player.level.value = 0.9f
+        assertEquals(0f, voice.level.value, 0f)
+    }
+
+    @Test
+    fun `level drops to 0 when the mic fails`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        capture.frames.send(pcm(20_000, -20_000))
+        assertEquals(1f, voice.level.value, 0f)
+
+        capture.frames.close(IllegalStateException("Microphone read failed"))
+
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertEquals(0f, voice.level.value, 0f)
+    }
+
     private companion object {
         const val NOW = 1_700_000_000_000L
     }

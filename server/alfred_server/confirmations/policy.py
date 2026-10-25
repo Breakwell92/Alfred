@@ -1,6 +1,7 @@
 """Which tools need confirmation, and marking them on an agent before it runs.
 
-A tool's tier is Dan's override if he set one, else its connector's declared risk. A tool
+A tool's tier is Dan's override if he set one, else its connector's declared default tier
+(`ToolMeta.default_tier`, e.g. media controls that run without asking), else its risk. A tool
 nothing declares is treated as `irreversible` (fail closed). Gated tools are marked with
 Agno's `requires_confirmation`, so Agno pauses the run before calling them.
 """
@@ -38,7 +39,7 @@ class ToolPolicy:
         if found is None:
             return UNDECLARED_TIER
         connector, meta = found
-        return self.overrides.get((connector.id, tool_name), meta.risk)
+        return self.overrides.get((connector.id, tool_name), meta.tier)
 
     def gated(self, tool_name: str) -> bool:
         return self.tier(tool_name) != "read"

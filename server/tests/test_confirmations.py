@@ -345,6 +345,7 @@ def test_permissions_list_declared_and_effective(harness: ChatHarness) -> None:
         "connector_id": "test_messages",
         "tool": "send_test_message",
         "declared": "write",
+        "default": "write",
         "override": "irreversible",
         "effective": "irreversible",
     } in rows
@@ -352,6 +353,16 @@ def test_permissions_list_declared_and_effective(harness: ChatHarness) -> None:
         "connector_id": "time",
         "tool": "get_time",
         "declared": "read",
+        "default": "read",
+        "override": None,
+        "effective": "read",
+    } in rows
+    # Media controls are honestly `write` but run without asking unless Dan tightens them.
+    assert {
+        "connector_id": "spotify",
+        "tool": "spotify_pause",
+        "declared": "write",
+        "default": "read",
         "override": None,
         "effective": "read",
     } in rows

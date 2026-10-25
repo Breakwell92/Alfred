@@ -47,6 +47,7 @@ It prints a line per case and a summary table, writes `reports/<time>-<aliases>.
   expected_specialist: home
   expected_tools:                 # each must be called with at least these arguments
     - {name: light_turn_on, args_subset: {area: kitchen}}
+    # args_contain: {device: kitchen}  # value contains this text (any case), e.g. "the kitchen"
   must_not_call: [light_turn_off] # ["*"] = no tools at all
   max_tier: local                 # local = the router must not want cloud
   reply_contains: ["kitchen"]     # optional, case-insensitive

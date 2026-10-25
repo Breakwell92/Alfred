@@ -2,7 +2,7 @@
 # is removed. Specialist and tool names are placeholders (see evals/fixtures/tools.yaml); the
 # ticket that adds each specialist renames them to match and drops `pending`.
 # Specialists assumed: home (Home Assistant lights/heating, TV), calendar, email, media
-# (Spotify, Plex), scheduler (reminders, schedules), messaging (contacts, messages).
+# (Plex; Spotify is built), scheduler (reminders, schedules), messaging (contacts, messages).
 
 # --- Weather -----------------------------------------------------------------------------
 - id: weather-now
@@ -145,35 +145,7 @@
   max_tier: local
   notes: Must pause for confirmation before sending.
 
-# --- Music and Plex ------------------------------------------------------------------------
-- id: music-play-artist
-  input: Play some Fleetwood Mac.
-  tags: [pending, media, music]
-  expected_specialist: media
-  expected_tools: [{name: music_play, args_subset: {query: Fleetwood Mac}}]
-  max_tier: local
-
-- id: music-pause
-  input: Pause the music.
-  tags: [pending, media, music]
-  expected_specialist: media
-  expected_tools: [{name: music_pause}]
-  max_tier: local
-
-- id: music-skip
-  input: Skip this song.
-  tags: [pending, media, music]
-  expected_specialist: media
-  expected_tools: [{name: music_skip}]
-  max_tier: local
-
-- id: music-mood
-  input: Put on something relaxing for dinner.
-  tags: [pending, media, music]
-  expected_specialist: media
-  expected_tools: [{name: music_play}]
-  max_tier: local
-
+# --- Plex (music is in media.yaml) -------------------------------------------------------
 - id: plex-play-film
   input: Play The Matrix on Plex.
   tags: [pending, media, plex]

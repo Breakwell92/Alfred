@@ -46,10 +46,23 @@ contacts_search:
     - {name: Sam Okafor, phone: "+44 7700 900002"}
 message_send: {status: pending_confirmation}
 
-# Music and Plex (pending)
-music_play: {ok: true, playing: "{query}"}
-music_pause: {ok: true}
-music_skip: {ok: true}
+# Spotify (alfred_server/connectors/builtin/spotify.py). Same style as the real tools.
+spotify_now_playing: "Playing: Dreams by Fleetwood Mac, from Rumours, on Kitchen."
+spotify_devices: "Spotify devices: Kitchen (speaker, active); Dan's Pixel (smartphone)."
+spotify_search: "Spotify results for {query}: Dreams by Fleetwood Mac; Rhiannon by Fleetwood Mac."
+spotify_my_playlists: "Your playlists: Discover Weekly; Release Radar; Running."
+spotify_play: "Playing {query}."
+spotify_pause: "Paused."
+spotify_next: "Skipped to the next track."
+spotify_previous: "Back to the previous track."
+spotify_volume: "Volume set to {percent}%."
+spotify_shuffle: "Shuffle set."
+spotify_repeat: "Repeat set to {mode}."
+spotify_transfer: "Moved to {device}."
+spotify_queue: "Queued {query}."
+spotify_like_current: "Added Dreams by Fleetwood Mac to your Liked Songs."
+
+# Plex (pending)
 plex_search:
   results:
     - {title: The Matrix, year: 1999, type: movie}

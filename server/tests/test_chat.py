@@ -18,6 +18,7 @@ from alfred_server.chat import (
     budget_dependency,
     confirmation_service_dependency,
     model_factory_dependency,
+    tool_loader_dependency,
 )
 from alfred_server.config import Settings
 from alfred_server.confirmations.service import ConfirmationService
@@ -37,6 +38,7 @@ from tests.llm_fakes import (
     tool_call_completion,
 )
 from tests.router_fakes import USD_PER_TOKEN, FakeBudget, deny
+from tests.spotify_fakes import FakeSpotify
 
 TOKEN = "test-token-not-a-secret"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -94,7 +96,13 @@ class ChatHarness:
         # A lambda so tests can swap `self.budget` after the harness is built.
         self.app.dependency_overrides[budget_dependency] = lambda: self.budget
         self.app.dependency_overrides[confirmation_service_dependency] = lambda: self.confirmations
+        # Connector tools: a fake Spotify for the media specialist.
+        self.spotify = FakeSpotify()
+        self.app.dependency_overrides[tool_loader_dependency] = lambda: self._tools
         self.client = TestClient(self.app)
+
+    async def _tools(self, specialist: str) -> list[Any]:
+        return [self.spotify.tools()] if specialist == "media" else []
 
     def _model(self, alias: ModelAlias, metadata: CallMetadata, **kwargs: Any) -> Model:
         settings = Settings(_env_file=None, litellm_api_key="sk-test")
@@ -472,3 +480,18 @@ def test_503_when_storage_is_down(broken_db_harness: ChatHarness, path: str) -> 
     assert response.status_code == 503
     assert response.json() == {"detail": "Conversation storage is unavailable"}
     assert broken_db_harness.proxy.requests == []  # refused before calling the model
+
+
+def test_a_media_request_controls_spotify_without_a_confirmation(harness: ChatHarness) -> None:
+    harness.reply_with(
+        route_completion(agent="media", level="simple"),
+        tool_call_completion("spotify_play", {"query": "Discover Weekly", "device": "kitchen"}),
+        reply("Playing Discover Weekly in the kitchen."),
+    )
+
+    body = harness.post("/chat", text="Play my Discover Weekly on the kitchen speaker").json()
+
+    assert body["reply"] == "Playing Discover Weekly in the kitchen."
+    assert body["confirmation"] is None
+    play = harness.spotify.last("PUT", "/me/player/play")
+    assert play.url.params["device_id"] == "dev-kitchen"

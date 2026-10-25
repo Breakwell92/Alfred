@@ -1,0 +1,65 @@
+# Music requests for the `media` specialist (Spotify, alfred_server/agents/media.py). Tools are
+# mocked from evals/fixtures/tools.yaml. Playback controls are `write` risk with a `read`
+# default tier, so they run without a confirmation.
+
+- id: music-play-artist
+  input: Play some Fleetwood Mac.
+  tags: [smoke, media, music]
+  expected_specialist: media
+  expected_tools: [{name: spotify_play, args_subset: {query: Fleetwood Mac}}]
+  max_tier: local
+
+- id: music-play-playlist-on-device
+  input: Play my Discover Weekly on the kitchen speaker.
+  tags: [smoke, media, music]
+  expected_specialist: media
+  expected_tools:
+    - {name: spotify_play, args_subset: {query: Discover Weekly}, args_contain: {device: kitchen}}
+  max_tier: local
+  notes: The device is passed as spoken; "kitchen" and "kitchen speaker" both resolve.
+
+- id: music-pause
+  input: Pause the music.
+  tags: [smoke, media, music]
+  expected_specialist: media
+  expected_tools: [{name: spotify_pause}]
+  must_not_call: [spotify_play]
+  max_tier: local
+
+- id: music-whats-playing
+  input: What's this song?
+  tags: [smoke, media, music]
+  expected_specialist: media
+  expected_tools: [{name: spotify_now_playing}]
+  must_not_call: [spotify_play, spotify_pause, spotify_next]
+  max_tier: local
+  reply_contains: ["Dreams"]
+
+- id: music-skip
+  input: Skip this song.
+  tags: [smoke, media, music]
+  expected_specialist: media
+  expected_tools: [{name: spotify_next}]
+  max_tier: local
+
+- id: music-volume
+  input: Set the volume to 40 percent.
+  tags: [media, music]
+  expected_specialist: media
+  expected_tools: [{name: spotify_volume, args_subset: {percent: 40}}]
+  max_tier: local
+
+- id: music-mood
+  input: Put on something relaxing for dinner.
+  tags: [media, music]
+  expected_specialist: media
+  expected_tools: [{name: spotify_play}]
+  max_tier: local
+
+- id: music-resume
+  input: Carry on playing the music.
+  tags: [media, music]
+  expected_specialist: media
+  expected_tools: [{name: spotify_play}]
+  must_not_call: [spotify_pause]
+  max_tier: local

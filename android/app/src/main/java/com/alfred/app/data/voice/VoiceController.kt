@@ -85,6 +85,9 @@ class VoiceController(
     /** A `confirm.reply` held back until the turn that asked has ended (else it's `busy`). */
     private var deferredReply: ClientMessage.ConfirmReply? = null
 
+    /** The confirmation [deferredReply] answers; the sheet comes back if the reply can't be sent. */
+    private var deferredFor: PendingConfirmation? = null
+
     init {
         scope.launch { connection.events.collect(::onEvent) }
         scope.launch {
@@ -118,6 +121,7 @@ class VoiceController(
         turnId = id
         serverDone = false
         deferredReply = null
+        deferredFor = null
         expiryJob?.cancel()
         // A new turn answers (or replaces) any pending confirmation on the server's side.
         _state.value = VoiceState(phase = VoicePhase.Listening)
@@ -166,36 +170,58 @@ class VoiceController(
         _state.update { it.copy(confirmation = null) }
     }
 
+    /**
+     * The sheet stays up (buttons disabled) until the `confirm.reply` has actually been sent, so
+     * an answer that can't go out comes back to the sheet to retry instead of vanishing.
+     */
     private fun answerOverSocket(confirmation: PendingConfirmation, approve: Boolean) {
         val reply = ClientMessage.ConfirmReply(confirmation.id, approve, newTurnId())
-        expiryJob?.cancel()
-        _state.update { it.copy(confirmation = null, error = null) }
+        _state.update { it.copy(confirmation = confirmation.copy(answering = true), error = null) }
+        player.stop()
         if (turnId != null && !serverDone) {
             // The asking turn hasn't finished on the server yet: quiet it, send when it ends.
-            player.stop()
             deferredReply = reply
+            deferredFor = confirmation
             return
         }
-        player.stop()
-        sendReply(reply)
+        sendReply(reply, confirmation)
     }
 
     private fun sendDeferredReply() {
         val reply = deferredReply ?: return
+        val confirmation = deferredFor ?: return
         deferredReply = null
-        sendReply(reply)
+        deferredFor = null
+        sendReply(reply, confirmation)
     }
 
-    private fun sendReply(reply: ClientMessage.ConfirmReply) {
+    private fun sendReply(reply: ClientMessage.ConfirmReply, confirmation: PendingConfirmation) {
         if (!connection.send(reply)) {
-            _state.update { it.copy(error = "Not connected to the server") }
+            restoreConfirmation(confirmation, "Not connected to the server; try again")
             return
         }
+        expiryJob?.cancel()
         // Its spoken answer is a turn of its own, tagged with our turn id.
         turnId = reply.turnId
         serverDone = false
         _state.update {
-            it.copy(phase = VoicePhase.Thinking, transcript = "", reply = "", metadata = null, error = null)
+            it.copy(
+                phase = VoicePhase.Thinking,
+                transcript = "",
+                reply = "",
+                metadata = null,
+                confirmation = null,
+                error = null,
+            )
+        }
+    }
+
+    /** Puts the sheet back (if it hasn't expired meanwhile) with [error], ready to answer again. */
+    private fun restoreConfirmation(confirmation: PendingConfirmation, error: String) {
+        _state.update {
+            val current = it.confirmation
+            if (current == null || current.id != confirmation.id) return@update it.copy(error = error)
+            it.copy(confirmation = confirmation.copy(answering = false), error = error)
         }
     }
 
@@ -250,7 +276,9 @@ class VoiceController(
             is DeviceEvent.Message -> onMessage(event.message)
             is DeviceEvent.Audio -> if (event.audio.turnId == turnId) player.write(event.audio.pcm)
             is DeviceEvent.Disconnected -> {
+                deferredFor?.let { restoreConfirmation(it, "Connection lost; try again once reconnected") }
                 deferredReply = null
+                deferredFor = null
                 if (_state.value.phase != VoicePhase.Idle) failTurn("Connection lost", cancelOnServer = false)
             }
         }

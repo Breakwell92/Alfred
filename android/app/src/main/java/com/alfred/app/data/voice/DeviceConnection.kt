@@ -174,7 +174,11 @@ class OkHttpDeviceConnection(
         var attempt = 0
         while (true) {
             _state.value = LinkState.Connecting
-            when (val outcome = session(url, target.token)) {
+            val outcome = session(url, target.token)
+            // A wake-up sent while connecting (e.g. Talk pressed then) is stale now: don't let it
+            // skip this backoff or retry a refused token.
+            wake.tryReceive()
+            when (outcome) {
                 is Outcome.Refused -> {
                     _state.value = LinkState.Rejected(outcome.reason)
                     wake.receive()

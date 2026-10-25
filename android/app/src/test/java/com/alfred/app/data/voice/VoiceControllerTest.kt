@@ -230,12 +230,13 @@ class VoiceControllerTest {
 
         voice.answer(approve = true)
 
-        assertNull(voice.state.value.confirmation)
+        assertTrue("the sheet waits, buttons off", voice.state.value.confirmation!!.answering)
         assertEquals("playback of the question stops", "stop", player.calls.last())
         assertFalse(connection.sent.any { it is ClientMessage.ConfirmReply })
 
         connection.receive(ServerMessage.Metadata(TurnMetadata(id)))
         connection.receive(ServerMessage.ReplyAudioEnd(id))
+        assertNull(voice.state.value.confirmation)
 
         val reply = connection.sent.last() as ClientMessage.ConfirmReply
         assertEquals("c-1", reply.confirmationId)
@@ -265,6 +266,42 @@ class VoiceControllerTest {
 
         val reply = connection.sent.last() as ClientMessage.ConfirmReply
         assertFalse(reply.approve)
+    }
+
+    @Test
+    fun `a write answer that can't be sent comes back to the sheet`() = runVoiceTest {
+        val voice = controller()
+        connection.receive(confirmRequest("t-x"))
+        connection.state.value = LinkState.Waiting("down", 1_000)
+
+        voice.answer(approve = true)
+
+        val confirmation = voice.state.value.confirmation
+        assertNotNull(confirmation)
+        assertFalse(confirmation!!.answering)
+        assertEquals("Not connected to the server; try again", voice.state.value.error)
+
+        connection.state.value = LinkState.Connected("s", voice = true)
+        voice.answer(approve = true)
+        assertTrue(connection.sent.last() is ClientMessage.ConfirmReply)
+        assertNull(voice.state.value.confirmation)
+    }
+
+    @Test
+    fun `a held-back write answer lost to a disconnect comes back to the sheet`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        connection.receive(confirmRequest(turnId()))
+        voice.answer(approve = true)
+
+        connection.disconnect()
+
+        assertFalse(connection.sent.any { it is ClientMessage.ConfirmReply })
+        val confirmation = voice.state.value.confirmation
+        assertNotNull(confirmation)
+        assertFalse(confirmation!!.answering)
+        assertNotNull(voice.state.value.error)
     }
 
     @Test

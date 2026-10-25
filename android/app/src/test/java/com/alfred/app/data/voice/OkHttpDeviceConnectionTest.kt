@@ -212,6 +212,22 @@ class OkHttpDeviceConnectionTest {
     }
 
     @Test
+    fun `a wake-up sent while connecting doesn't retry a refused token`() = runBlocking<Unit> {
+        val side = upgrade()
+        connection.start()
+        val ws = side.opened.receive()
+        side.received.receive() // hello
+        connection.reconnectNow() // e.g. Talk pressed while still connecting
+
+        ws.close(CloseCode.UNAUTHORISED, "bad token")
+
+        awaitState { it is LinkState.Rejected }
+        delay(300)
+        assertEquals(1, server.requestCount)
+        assertTrue(connection.state.value is LinkState.Rejected)
+    }
+
+    @Test
     fun `new settings reconnect`() = runBlocking<Unit> {
         val first = upgrade()
         val second = upgrade()

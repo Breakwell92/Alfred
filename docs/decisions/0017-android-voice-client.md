@@ -29,7 +29,7 @@ The server's device WebSocket (`/ws/device`, [ADR 0015](0015-voice-gateway.md), 
 
 ## Consequences
 
-- The wake-word service (STU-68) reuses `DeviceConnection`, `AudioCapture`, `AudioPlayer` and `VoiceController`; it will need a foreground service to hold the socket while the app is in the background (today it closes in `onStop`).
+- The wake-word service (STU-68, [ADR 0019](0019-wake-word.md)) reuses `DeviceConnection`, `AudioCapture`, `AudioPlayer` and `VoiceController`. Its foreground service holds the socket open while the app is in the background, through `LinkHolds`. The socket now closes in `onStop` only if nothing else holds it.
 - Barge-in (STU-72) can build on `cancel()` and the echo canceller already attached to the mic.
 - Replies approved over HTTP aren't spoken. If that matters, the server could send the answer as a turn on the device's socket.
 - Bluetooth routing covers A2DP/LE audio; SCO (call-mode headsets) isn't set up, so a mono car kit may not be used for the reply.

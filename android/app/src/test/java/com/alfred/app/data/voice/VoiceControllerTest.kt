@@ -384,6 +384,29 @@ class VoiceControllerTest {
         assertNull(voice.state.value.confirmation)
     }
 
+    @Test
+    fun `an end-of-speech detector ends a hands-free turn`() = runVoiceTest {
+        val voice = controller()
+        var frames = 0
+        assertTrue(voice.startListening(endOfSpeech = { ++frames >= 3 }))
+        repeat(2) { capture.frames.trySend(ByteArray(640)) }
+        assertEquals(VoicePhase.Listening, voice.state.value.phase)
+
+        capture.frames.trySend(ByteArray(640))
+        assertEquals(VoicePhase.Thinking, voice.state.value.phase)
+        assertEquals(ClientMessage.TurnEnd(turnId()), connection.sent.last())
+        assertEquals(3, connection.audio.size)
+        assertFalse(capture.open)
+    }
+
+    @Test
+    fun `push-to-talk ignores silence`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        repeat(500) { capture.frames.trySend(ByteArray(640)) }
+        assertEquals(VoicePhase.Listening, voice.state.value.phase)
+    }
+
     private companion object {
         const val NOW = 1_700_000_000_000L
     }

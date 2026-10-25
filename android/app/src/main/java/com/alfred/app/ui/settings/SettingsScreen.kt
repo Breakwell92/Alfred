@@ -36,6 +36,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
         onSave = viewModel::save,
         onPairingCodeChange = viewModel::onPairingCodeChange,
         onPair = viewModel::pair,
+        wakeWord = { WakeWordSection() },
     )
 }
 
@@ -47,6 +48,7 @@ fun SettingsContent(
     onSave: () -> Unit,
     onPairingCodeChange: (String) -> Unit,
     onPair: () -> Unit,
+    wakeWord: @Composable () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -115,6 +117,9 @@ fun SettingsContent(
         Button(onClick = onPair, enabled = state.loaded && !state.pairing) {
             Text(if (state.pairedDeviceName == null) "Pair" else "Pair again")
         }
+
+        HorizontalDivider()
+        wakeWord()
     }
 }
 

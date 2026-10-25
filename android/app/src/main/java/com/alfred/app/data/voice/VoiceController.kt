@@ -99,8 +99,12 @@ class VoiceController(
         }
     }
 
-    /** Opens the mic and starts a turn. False if there's no usable connection. */
-    fun startListening(): Boolean {
+    /**
+     * Opens the mic and starts a turn. False if there's no usable connection. With [endOfSpeech]
+     * (hands-free turns, e.g. the wake word) the turn ends by itself when it says so; without,
+     * it lasts until [stopListening].
+     */
+    fun startListening(endOfSpeech: EndOfSpeechDetector? = null): Boolean {
         if (_state.value.phase == VoicePhase.Listening) return true
         val link = connection.state.value
         if (link !is LinkState.Connected) {
@@ -127,7 +131,10 @@ class VoiceController(
         _state.value = VoiceState(phase = VoicePhase.Listening)
         captureJob = scope.launch {
             try {
-                capture.frames().collect { connection.sendAudio(it) }
+                capture.frames().collect { frame ->
+                    connection.sendAudio(frame)
+                    if (endOfSpeech?.onFrame(frame) == true && turnId == id) stopListening()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

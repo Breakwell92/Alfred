@@ -52,7 +52,7 @@ A 20 ms frame counts as speech when its RMS is 3× the quietest frame of the las
 
 **Native libraries.** ONNX Runtime is about 35 MB of native code per ABI, so the APK keeps `arm64-v8a` and `x86_64` (for the emulator) only. On any other ABI, the listener reports that it can't run instead of crashing.
 
-**Not done here:** starting on boot. Android 15 doesn't let a `BOOT_COMPLETED` receiver start a `microphone` foreground service, and boot start is part of STU-71 (background reliability), which also covers battery optimisation and OEM task killers. Today the service starts whenever the app is opened with the wake word enabled.
+**Not done here:** starting on boot. Android 15 doesn't let a `BOOT_COMPLETED` receiver start a `microphone` foreground service. Boot start, battery optimisation and OEM task killers are STU-71, see [ADR 0025](0025-background-reliability.md).
 
 ## Results
 
@@ -80,7 +80,7 @@ If false accepts are too high, lower the sensitivity. If wakes are missed at 3 m
 
 - STU-69 (Silero VAD, [ADR 0024](0024-end-of-speech-vad.md)) replaced `EnergyEndOfSpeech`, reusing ONNX Runtime. A wake turn where nobody speaks is now cancelled quietly with a soft chime.
 - STU-70 (custom "Hey Alfred") adds a model file and a `StockWakeWord`-like entry. The detector doesn't change.
-- STU-71 has to add boot start (within Android 15's rules) and battery-optimisation guidance. Restarting after the process is killed is limited the same way: `START_STICKY` restarts in the background can't start a mic service, so the service stops itself.
+- STU-71 ([ADR 0025](0025-background-reliability.md)) added boot start, a watchdog and battery-optimisation guidance. Where Android refuses a background start of the mic service (boot on Android 14+, `START_STICKY` restarts, the watchdog), the service shows a "Tap to resume" notification instead of stopping silently.
 - STU-72 (follow-up / barge-in) can use the same `EndOfSpeechDetector` hook.
 - The app is about 75 MB bigger (debug) because of ONNX Runtime's native libraries.
 - The stock wake word models are CC BY-NC-SA 4.0 (non-commercial), which is fine for this personal app (`android/licenses/openwakeword/`).

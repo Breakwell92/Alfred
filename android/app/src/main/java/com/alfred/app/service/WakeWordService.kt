@@ -16,6 +16,10 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.alfred.app.MainActivity
 import com.alfred.app.R
+import com.alfred.app.data.reliability.ReliabilityRecorder
+import com.alfred.app.data.reliability.ServiceStarter
+import com.alfred.app.data.reliability.StartReason
+import com.alfred.app.data.reliability.StoppedListeningNotification
 import com.alfred.app.data.voice.LinkHolds
 import com.alfred.app.data.voice.VoiceController
 import com.alfred.app.data.wakeword.PauseReason
@@ -23,11 +27,15 @@ import com.alfred.app.data.wakeword.RecentWake
 import com.alfred.app.data.wakeword.WakeState
 import com.alfred.app.data.wakeword.WakeWordController
 import com.alfred.app.data.wakeword.describe
+import com.alfred.app.di.APP_SCOPE
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
+import org.koin.core.qualifier.named
 
 /**
  * Listens for the wake word in the background (ADR 0019): a `microphone` foreground service
@@ -40,15 +48,25 @@ class WakeWordService : Service() {
     private val controller: WakeWordController by inject()
     private val links: LinkHolds by inject()
     private val voice: VoiceController by inject()
+    private val recorder: ReliabilityRecorder by inject()
+    private val appScope: CoroutineScope by inject(named(APP_SCOPE))
     private val scope = MainScope()
+    private var recordedStart = false
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
         if (!startInForeground(notification(WakeState.Off, null))) {
+            // Restarted from the background (boot, watchdog, START_STICKY): Android won't let it
+            // record until Dan brings the app forward, so ask Dan to (ADR 0025). The app scope,
+            // because this service's scope is cancelled as it stops.
+            appScope.launch { recorder.restartBlocked("background") }
+            StoppedListeningNotification.show(this)
             stopSelf()
             return
         }
+        isRunning = true
+        StoppedListeningNotification.cancel(this)
         links.hold(LinkHolds.WAKE_WORD)
         controller.start()
         scope.launch {
@@ -59,6 +77,23 @@ class WakeWordService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (isRunning && !recordedStart) {
+            recordedStart = true
+            // A null intent is Android restarting a sticky service after killing the process.
+            val reason = if (intent == null) {
+                StartReason.Sticky
+            } else {
+                StartReason.fromWire(intent.getStringExtra(EXTRA_START_REASON)) ?: StartReason.App
+            }
+            scope.launch {
+                recorder.serviceStarted(reason)
+                // Its absence after a death tells the next start how long the gap was.
+                while (true) {
+                    delay(HEARTBEAT_MILLIS)
+                    recorder.heartbeat()
+                }
+            }
+        }
         when (intent?.action) {
             ACTION_PAUSE -> controller.pause()
             ACTION_RESUME -> controller.resume()
@@ -68,6 +103,8 @@ class WakeWordService : Service() {
     }
 
     override fun onDestroy() {
+        // Not a clean stop by itself: Android may stop it too. The Settings toggle records that.
+        isRunning = false
         scope.cancel()
         controller.stop()
         // The app isn't on screen either: nothing else needs the turn or the socket.
@@ -144,10 +181,25 @@ class WakeWordService : Service() {
         private const val ACTION_PAUSE = "com.alfred.app.wakeword.PAUSE"
         private const val ACTION_RESUME = "com.alfred.app.wakeword.RESUME"
         private const val ACTION_NOT_ME = "com.alfred.app.wakeword.NOT_ME"
+        private const val HEARTBEAT_MILLIS = 60_000L
 
-        /** Call while the app is in the foreground (Android only allows starting mic services then). */
-        fun start(context: Context) {
-            ContextCompat.startForegroundService(context, Intent(context, WakeWordService::class.java))
+        /** A [StartReason] wire name, for the health record. */
+        const val EXTRA_START_REASON = "com.alfred.app.wakeword.START_REASON"
+
+        /** True while this process has the service listening in the foreground. */
+        @Volatile
+        var isRunning = false
+            private set
+
+        /**
+         * Android only lets a mic service start while the app is in the foreground; from the
+         * background this throws, or the service stops itself (see [ServiceStarter]).
+         */
+        fun start(context: Context, reason: StartReason = StartReason.App) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, WakeWordService::class.java).putExtra(EXTRA_START_REASON, reason.wire),
+            )
         }
 
         fun stop(context: Context) {

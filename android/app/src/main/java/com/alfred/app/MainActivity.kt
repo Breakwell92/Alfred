@@ -1,6 +1,7 @@
 package com.alfred.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -11,6 +12,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.alfred.app.data.reliability.ReliabilityRecorder
+import com.alfred.app.data.reliability.StartReason
+import com.alfred.app.data.reliability.Watchdog
 import com.alfred.app.data.voice.LinkHolds
 import com.alfred.app.data.voice.VoiceController
 import com.alfred.app.data.wakeword.WakeWordSettingsRepository
@@ -18,6 +22,7 @@ import com.alfred.app.service.WakeWordService
 import com.alfred.app.ui.AlfredApp
 import com.alfred.app.ui.theme.AlfredTheme
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
@@ -26,6 +31,7 @@ class MainActivity : ComponentActivity() {
     private val links: LinkHolds by inject()
     private val voice: VoiceController by inject()
     private val wakeWordSettings: WakeWordSettingsRepository by inject()
+    private val recorder: ReliabilityRecorder by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,17 +45,40 @@ class MainActivity : ComponentActivity() {
         }
         // The wake word service follows the Settings toggle. It can only be started while the
         // app is on screen (Android's rule for mic services); once running it stays running.
+        // The watchdog (ADR 0025) runs while it's on, to bring it back if Android kills it.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 wakeWordSettings.settings.map { it.enabled }.distinctUntilChanged().collect { enabled ->
                     when {
-                        enabled && hasMic() -> WakeWordService.start(this@MainActivity)
-                        !enabled -> WakeWordService.stop(this@MainActivity)
+                        enabled && hasMic() -> {
+                            Watchdog.schedule(this@MainActivity)
+                            WakeWordService.start(this@MainActivity, startReason(intent))
+                        }
+                        !enabled -> {
+                            Watchdog.cancel(this@MainActivity)
+                            WakeWordService.stop(this@MainActivity)
+                            recorder.serviceStopped()
+                        }
                     }
                 }
             }
         }
     }
+
+    // "Tap to resume" while the app is already open.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (startReason(intent) != StartReason.Resume) return
+        lifecycleScope.launch {
+            if (wakeWordSettings.settings.first().enabled && hasMic()) {
+                WakeWordService.start(this@MainActivity, StartReason.Resume)
+            }
+        }
+    }
+
+    private fun startReason(intent: Intent?): StartReason =
+        StartReason.fromWire(intent?.getStringExtra(WakeWordService.EXTRA_START_REASON)) ?: StartReason.App
 
     // The voice socket is open while the app is on screen, and while the wake word service runs.
     override fun onStart() {

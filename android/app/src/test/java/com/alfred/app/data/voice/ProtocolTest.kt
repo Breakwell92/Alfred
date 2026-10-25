@@ -39,6 +39,24 @@ class ProtocolTest {
     }
 
     @Test
+    fun `hello carries the wake word service's health in seconds`() {
+        assertJson(
+            """{"type":"hello","protocol":1,"device_id":"d","device_type":"phone",
+               "health":{"listening_since":1700000000.5,"restarts":2,"reconnects":5,
+                         "last_restart_at":1700000100,"last_gap_s":720}}""",
+            ClientMessage.Hello(
+                "d",
+                health = DeviceHealth(1_700_000_000_500, 2, 5, 1_700_000_100_000, 720_000),
+            ),
+        )
+        assertJson(
+            """{"type":"hello","protocol":1,"device_id":"d","device_type":"phone",
+               "health":{"restarts":0,"reconnects":0}}""",
+            ClientMessage.Hello("d", health = DeviceHealth()),
+        )
+    }
+
+    @Test
     fun `hello never prints its token`() {
         assertFalse(ClientMessage.Hello("d", token = "secret").toString().contains("secret"))
     }

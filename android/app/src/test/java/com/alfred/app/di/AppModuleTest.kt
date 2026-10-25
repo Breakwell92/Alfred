@@ -2,6 +2,9 @@ package com.alfred.app.di
 
 import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.device.DeviceKeys
+import com.alfred.app.data.reliability.HealthRepository
+import com.alfred.app.data.reliability.ReliabilityLog
+import com.alfred.app.data.reliability.ReliabilityRecorder
 import com.alfred.app.data.settings.AppSettings
 import com.alfred.app.data.settings.ProfileSettingsRepository
 import com.alfred.app.data.settings.SettingsRepository
@@ -23,7 +26,9 @@ import com.alfred.app.testing.FakeAudioCapture
 import com.alfred.app.testing.FakeAudioPlayer
 import com.alfred.app.testing.FakeDeviceKeys
 import com.alfred.app.testing.FakeEndpointLog
+import com.alfred.app.testing.FakeHealthRepository
 import com.alfred.app.testing.FakeProfileSettingsRepository
+import com.alfred.app.testing.FakeReliabilityLog
 import com.alfred.app.testing.FakeSettingsRepository
 import com.alfred.app.testing.FakeVadSettingsRepository
 import com.alfred.app.testing.FakeWakeEventLog
@@ -67,6 +72,8 @@ class AppModuleTest {
             single<WakeEventLog> { FakeWakeEventLog() }
             single<VadSettingsRepository> { FakeVadSettingsRepository() }
             single<EndpointLog> { FakeEndpointLog() }
+            single<HealthRepository> { FakeHealthRepository() }
+            single<ReliabilityLog> { FakeReliabilityLog() }
             // The real one loads the model from the APK's assets and logs to logcat.
             single {
                 EndOfSpeechFactory(
@@ -96,5 +103,6 @@ class AppModuleTest {
         koin.get<TransmittingViewModel>()
         koin.get<EndOfSpeechFactory>()
         koin.get<VadSettingsViewModel>()
+        koin.get<ReliabilityRecorder>()
     }
 }

@@ -3,6 +3,7 @@ package com.alfred.app.data.voice
 import com.alfred.app.data.settings.SettingsRepository
 import com.alfred.app.data.settings.isValidApiToken
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -83,6 +85,12 @@ interface DeviceConnection {
     /** Retry now instead of waiting out the backoff, e.g. when the user presses Talk. */
     fun reconnectNow()
 
+    /**
+     * The phone has a network again (or a new one): if the socket is down, retry now and start
+     * the backoff over (ADR 0025). Ignored while the server is refusing us.
+     */
+    fun networkAvailable()
+
     /** False when there's no connected socket (the message is dropped). */
     fun send(message: ClientMessage): Boolean
 
@@ -90,8 +98,12 @@ interface DeviceConnection {
     fun sendAudio(pcm: ByteArray): Boolean
 }
 
-/** Delay before reconnect attempt [attempt] (0-based): 1, 2, 4, 8, then 15 s. */
-fun defaultRetryDelay(attempt: Int): Long = minOf(1_000L shl minOf(attempt, 4), 15_000L)
+/**
+ * Delay before reconnect attempt [attempt] (0-based): 1, 2, 4, 8, 16, 32, then 60 s. Long waits
+ * are fine because a network coming back retries straight away ([DeviceConnection.networkAvailable]);
+ * retrying often with no network only keeps a dozing phone awake (ADR 0025).
+ */
+fun defaultRetryDelay(attempt: Int): Long = minOf(1_000L shl minOf(attempt, 6), 60_000L)
 
 /** `http://glados:8000` → `http://glados:8000/ws/device` (OkHttp upgrades http(s) to ws(s)). */
 fun webSocketUrl(serverUrl: String): HttpUrl? {
@@ -110,6 +122,8 @@ class OkHttpDeviceConnection(
     private val retryDelay: (attempt: Int) -> Long = ::defaultRetryDelay,
     private val pingIntervalMillis: Long = PING_INTERVAL_MILLIS,
     private val helloTimeoutMillis: Long = HELLO_TIMEOUT_MILLIS,
+    /** Sent in `hello.health`; null leaves it out. */
+    private val healthProvider: suspend () -> DeviceHealth? = { null },
 ) : DeviceConnection {
 
     // No read timeout on a long-lived socket; WebSocket pings spot a dead link (a phone that
@@ -126,6 +140,7 @@ class OkHttpDeviceConnection(
     override val events: SharedFlow<DeviceEvent> = _events.asSharedFlow()
 
     private val wake = Channel<Unit>(Channel.CONFLATED)
+    private val network = Channel<Unit>(Channel.CONFLATED)
     private var job: Job? = null
 
     /** The socket once `hello.ok` has arrived; null otherwise. */
@@ -148,6 +163,10 @@ class OkHttpDeviceConnection(
 
     override fun reconnectNow() {
         wake.trySend(Unit)
+    }
+
+    override fun networkAvailable() {
+        network.trySend(Unit)
     }
 
     override fun send(message: ClientMessage): Boolean = socket?.send(message.encode()) ?: false
@@ -192,10 +211,20 @@ class OkHttpDeviceConnection(
                     attempt = 0
                 }
                 is Outcome.Lost -> {
-                    if (outcome.wasConnected) attempt = 0
+                    // A network that came back during that attempt (or while connected: the
+                    // phone switched networks) is the likely cure: retry now.
+                    if (outcome.wasConnected || network.tryReceive().isSuccess) {
+                        attempt = 0
+                        if (!outcome.wasConnected) continue
+                    }
                     val wait = retryDelay(attempt++)
                     _state.value = LinkState.Waiting(outcome.reason, wait)
-                    withTimeoutOrNull(wait) { wake.receive() }
+                    withTimeoutOrNull(wait) {
+                        select {
+                            wake.onReceive {}
+                            network.onReceive { attempt = 0 }
+                        }
+                    }
                 }
             }
         }
@@ -262,6 +291,14 @@ class OkHttpDeviceConnection(
                             deviceId = deviceIds.deviceId(),
                             appVersion = appVersion,
                             capabilities = CAPABILITIES,
+                            // Nice to have: a hello without it is still a hello.
+                            health = try {
+                                healthProvider()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                null
+                            },
                         )
                         ws.send(hello.encode())
                     }

@@ -1,0 +1,353 @@
+package com.alfred.app.data.voice
+
+import com.alfred.app.data.device.ApprovalSigner
+import com.alfred.app.data.server.AnswerResult
+import com.alfred.app.data.settings.AppSettings
+import com.alfred.app.testing.FakeAudioCapture
+import com.alfred.app.testing.FakeAudioPlayer
+import com.alfred.app.testing.FakeDeviceConnection
+import com.alfred.app.testing.FakeDeviceKeys
+import com.alfred.app.testing.FakeServerClient
+import com.alfred.app.testing.FakeSettingsRepository
+import java.time.Instant
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class VoiceControllerTest {
+
+    private val connection = FakeDeviceConnection()
+    private val capture = FakeAudioCapture()
+    private val player = FakeAudioPlayer()
+    private val server = FakeServerClient()
+    private val settings = FakeSettingsRepository(
+        AppSettings("http://glados:8000", "token", pairedDeviceId = "paired-1", pairedDeviceName = "pixel"),
+    )
+    private val keys = FakeDeviceKeys()
+
+    private fun TestScope.controller(): VoiceController {
+        val dispatcher = UnconfinedTestDispatcher(testScheduler)
+        return VoiceController(
+            connection = connection,
+            capture = capture,
+            player = player,
+            serverClient = server,
+            settingsRepository = settings,
+            signer = ApprovalSigner(keys) { 1_700_000_000 },
+            scope = backgroundScope,
+            ioDispatcher = dispatcher,
+            clock = { NOW + testScheduler.currentTime },
+        )
+    }
+
+    private fun runVoiceTest(block: suspend TestScope.() -> Unit) = runTest(UnconfinedTestDispatcher(), testBody = block)
+
+    private fun turnId(): String = (connection.sent.first { it is ClientMessage.TurnStart } as ClientMessage.TurnStart).turnId
+
+    private fun confirmRequest(turnId: String, tier: String = "write", expiresInMillis: Long = 120_000) =
+        ServerMessage.ConfirmRequest(
+            turnId = turnId,
+            id = "c-1",
+            summary = "Send a test message to Sam",
+            tier = tier,
+            expiresAt = Instant.ofEpochMilli(NOW + expiresInMillis).toString(),
+        )
+
+    @Test
+    fun `a full turn`() = runVoiceTest {
+        val voice = controller()
+
+        assertTrue(voice.startListening())
+        assertEquals(VoicePhase.Listening, voice.state.value.phase)
+        assertTrue(capture.open)
+        capture.frames.send(byteArrayOf(1))
+        capture.frames.send(byteArrayOf(2))
+        assertEquals(2, connection.audio.size)
+
+        voice.stopListening()
+        val id = turnId()
+        assertEquals(ClientMessage.TurnEnd(id), connection.sent.last())
+        assertFalse("the mic closes at end of speech", capture.open)
+        assertEquals(VoicePhase.Thinking, voice.state.value.phase)
+
+        connection.receive(ServerMessage.TranscriptFinal(id, "What time is it?"))
+        connection.receive(ServerMessage.ReplyTextDelta(id, "It's "))
+        connection.receive(ServerMessage.ReplyAudioStart(id, 24_000))
+        connection.receiveAudio(id, byteArrayOf(7, 7))
+        connection.receive(ServerMessage.ReplyTextDelta(id, "three."))
+        assertEquals(VoicePhase.Speaking, voice.state.value.phase)
+        connection.receive(ServerMessage.Metadata(TurnMetadata(id, specialist = "general", alias = "local-main")))
+        connection.receive(ServerMessage.ReplyAudioEnd(id))
+
+        assertEquals(listOf("begin(24000)", "finish"), player.calls)
+        assertArrayEquals(byteArrayOf(7, 7), player.written.single())
+        assertEquals(VoicePhase.Speaking, voice.state.value.phase)
+        player.finishPlaying()
+
+        val state = voice.state.value
+        assertEquals(VoicePhase.Idle, state.phase)
+        assertEquals("What time is it?", state.transcript)
+        assertEquals("It's three.", state.reply)
+        assertEquals("local-main", state.metadata?.alias)
+        assertNull(state.error)
+    }
+
+    @Test
+    fun `audio and messages for other turns are dropped`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+
+        connection.receive(ServerMessage.ReplyTextDelta("old-turn", "stale"))
+        connection.receiveAudio("old-turn", byteArrayOf(1))
+
+        assertEquals("", voice.state.value.reply)
+        assertTrue(player.written.isEmpty())
+    }
+
+    @Test
+    fun `not connected asks for a reconnect`() = runVoiceTest {
+        connection.state.value = LinkState.Waiting("down", 1_000)
+        val voice = controller()
+
+        assertFalse(voice.startListening())
+
+        assertEquals(1, connection.reconnects)
+        assertEquals("Not connected to the server", voice.state.value.error)
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+    }
+
+    @Test
+    fun `voice off on the server`() = runVoiceTest {
+        connection.state.value = LinkState.Connected("s", voice = false)
+        val voice = controller()
+
+        assertFalse(voice.startListening())
+        assertEquals("Voice is turned off on the server", voice.state.value.error)
+    }
+
+    @Test
+    fun `cancel while speaking stops playback and tells the server`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        val id = turnId()
+        connection.receive(ServerMessage.ReplyAudioStart(id, 24_000))
+
+        voice.cancel()
+
+        assertEquals("stop", player.calls.last())
+        assertEquals(ClientMessage.TurnCancel(id), connection.sent.last())
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        // Late audio for the cancelled turn is ignored.
+        connection.receiveAudio(id, byteArrayOf(1))
+        assertTrue(player.written.isEmpty())
+    }
+
+    @Test
+    fun `cancel after the server finished only stops playback`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        val id = turnId()
+        connection.receive(ServerMessage.ReplyAudioStart(id, 24_000))
+        connection.receive(ServerMessage.ReplyAudioEnd(id))
+        val sent = connection.sent.size
+
+        voice.cancel()
+
+        assertEquals(sent, connection.sent.size)
+        assertEquals("stop", player.calls.last())
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+    }
+
+    @Test
+    fun `losing the connection mid-turn ends it with an error`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+
+        connection.disconnect()
+
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertEquals("Connection lost", voice.state.value.error)
+        assertFalse(capture.open)
+    }
+
+    @Test
+    fun `a turn error is shown`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+
+        connection.receive(ServerMessage.Error(turnId(), "no_speech", "Nothing recognised"))
+
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertEquals("Didn't catch that", voice.state.value.error)
+    }
+
+    @Test
+    fun `an error before end of speech closes the mic`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+
+        connection.receive(ServerMessage.Error(turnId(), "audio_too_long", "too long"))
+
+        assertFalse(capture.open)
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+    }
+
+    @Test
+    fun `a mic failure cancels the turn`() = runVoiceTest {
+        capture.error = SecurityException("no permission")
+        val voice = controller()
+
+        voice.startListening()
+
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertEquals("Alfred needs microphone permission", voice.state.value.error)
+        assertTrue(connection.sent.last() is ClientMessage.TurnCancel)
+    }
+
+    @Test
+    fun `write confirmation is answered over the socket once the asking turn ends`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        val id = turnId()
+        connection.receive(ServerMessage.ReplyAudioStart(id, 24_000))
+        connection.receive(confirmRequest(id))
+        assertEquals("c-1", voice.state.value.confirmation?.id)
+
+        voice.answer(approve = true)
+
+        assertNull(voice.state.value.confirmation)
+        assertEquals("playback of the question stops", "stop", player.calls.last())
+        assertFalse(connection.sent.any { it is ClientMessage.ConfirmReply })
+
+        connection.receive(ServerMessage.Metadata(TurnMetadata(id)))
+        connection.receive(ServerMessage.ReplyAudioEnd(id))
+
+        val reply = connection.sent.last() as ClientMessage.ConfirmReply
+        assertEquals("c-1", reply.confirmationId)
+        assertTrue(reply.approve)
+        val answerTurn = reply.turnId!!
+        assertEquals(VoicePhase.Thinking, voice.state.value.phase)
+
+        // The spoken answer is its own turn.
+        connection.receive(ServerMessage.ReplyTextDelta(answerTurn, "Sent."))
+        connection.receive(ServerMessage.ReplyAudioStart(answerTurn, 24_000))
+        connection.receive(ServerMessage.ReplyAudioEnd(answerTurn))
+        player.finishPlaying()
+        assertEquals("Sent.", voice.state.value.reply)
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+    }
+
+    @Test
+    fun `write confirmation after the turn is sent straight away`() = runVoiceTest {
+        val voice = controller()
+        voice.startListening()
+        voice.stopListening()
+        val id = turnId()
+        connection.receive(confirmRequest(id))
+        connection.receive(ServerMessage.ReplyAudioEnd(id))
+
+        voice.answer(approve = false)
+
+        val reply = connection.sent.last() as ClientMessage.ConfirmReply
+        assertFalse(reply.approve)
+    }
+
+    @Test
+    fun `irreversible confirmation is approved over http with a signed proof`() = runVoiceTest {
+        server.answer = AnswerResult.Answered("The front door is locked.")
+        val voice = controller()
+        connection.receive(confirmRequest("t-x", tier = "irreversible"))
+
+        voice.answer(approve = true)
+
+        val answer = server.answered.single()
+        assertEquals("c-1", answer.confirmationId)
+        assertTrue(answer.approve)
+        assertEquals("paired-1", answer.proof?.deviceId)
+        assertFalse(connection.sent.any { it is ClientMessage.ConfirmReply })
+        assertNull(voice.state.value.confirmation)
+        assertEquals("The front door is locked.", voice.state.value.reply)
+    }
+
+    @Test
+    fun `irreversible approval needs a paired phone`() = runVoiceTest {
+        val unpaired = FakeSettingsRepository(AppSettings("http://glados:8000", "token"))
+        val voice = VoiceController(
+            connection, capture, player, server, unpaired, ApprovalSigner(keys),
+            backgroundScope, UnconfinedTestDispatcher(testScheduler),
+            clock = { NOW + testScheduler.currentTime },
+        )
+        connection.receive(confirmRequest("t-x", tier = "irreversible"))
+
+        voice.answer(approve = true)
+
+        assertTrue(server.answered.isEmpty())
+        assertNotNull("the sheet stays up", voice.state.value.confirmation)
+        assertFalse(voice.state.value.confirmation!!.answering)
+        assertEquals("Pair this phone in Settings → Approvals to approve this", voice.state.value.error)
+    }
+
+    @Test
+    fun `irreversible deny needs no proof`() = runVoiceTest {
+        val voice = controller()
+        connection.receive(confirmRequest("t-x", tier = "irreversible"))
+
+        voice.answer(approve = false)
+
+        val answer = server.answered.single()
+        assertFalse(answer.approve)
+        assertNull(answer.proof)
+    }
+
+    @Test
+    fun `a refused approval keeps the sheet up with the reason`() = runVoiceTest {
+        server.answer = AnswerResult.Forbidden("Not paired")
+        val voice = controller()
+        connection.receive(confirmRequest("t-x", tier = "irreversible"))
+
+        voice.answer(approve = true)
+
+        assertNotNull(voice.state.value.confirmation)
+        assertEquals("Not paired", voice.state.value.error)
+    }
+
+    @Test
+    fun `a confirmation disappears when it expires`() = runVoiceTest {
+        val voice = controller()
+        connection.receive(confirmRequest("t-x", expiresInMillis = 5_000))
+
+        advanceTimeBy(4_000)
+        assertNotNull(voice.state.value.confirmation)
+        advanceTimeBy(1_001)
+        assertNull(voice.state.value.confirmation)
+    }
+
+    @Test
+    fun `a new turn replaces the pending confirmation`() = runVoiceTest {
+        val voice = controller()
+        connection.receive(confirmRequest("t-x"))
+
+        voice.startListening()
+
+        assertNull(voice.state.value.confirmation)
+    }
+
+    private companion object {
+        const val NOW = 1_700_000_000_000L
+    }
+}

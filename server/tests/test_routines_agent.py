@@ -112,3 +112,12 @@ def test_routines_specialist_gets_only_read_tools_from_other_connectors() -> Non
     # No action tools, not even ones that run without asking.
     assert not {"ha_turn_on", "ha_set_light", "spotify_play", "send_test_message"} & names
     assert loader.loaded == ["home", "media", "general"]
+
+
+def test_the_read_back_says_replace_when_the_name_is_taken() -> None:
+    policy = ToolPolicy(default_registry())
+    args = {"name": "movie time", "phrases": ["movie time"], "steps": STEPS}
+    assert summarise_save(policy, args, exists=lambda name: True).startswith(
+        "Replace the routine 'movie time'"
+    )
+    assert summarise_save(policy, args, exists=lambda name: False).startswith("Save the routine")

@@ -9,10 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-# The longest wait a step may ask for before it runs.
-MAX_DELAY_S = 300.0
+# The longest a routine may wait in total, across its steps' delays. A run holds the request
+# (or the voice turn) until it finishes, so this keeps a run well inside a turn.
+MAX_DELAY_S = 30.0
 
 
 class RoutineStep(BaseModel):
@@ -51,6 +52,12 @@ class RoutineSpec(BaseModel):
         if any(not p or len(p) > 80 for p in phrases):
             raise ValueError("each phrase must be 1 to 80 characters")
         return phrases
+
+    @model_validator(mode="after")
+    def _total_delay(self) -> RoutineSpec:
+        if sum(s.delay_s for s in self.steps) > MAX_DELAY_S:
+            raise ValueError(f"the steps' delays add up to more than {MAX_DELAY_S:g} seconds")
+        return self
 
 
 class Routine(RoutineSpec):

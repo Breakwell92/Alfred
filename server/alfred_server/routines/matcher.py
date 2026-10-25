@@ -16,6 +16,12 @@ from alfred_server.routines.models import Routine
 # A fuzzy match needs at least this similarity, and phrases this long.
 FUZZY_RATIO = 0.9
 FUZZY_MIN_CHARS = 5
+# The one word that may differ must be at least this close to the phrase's word.
+WORD_RATIO = 0.75
+# Words a fuzzy match ignores ("the movie time").
+_FILLER = frozenset({"the", "a", "an", "my"})
+# Prefixes that turn a word into its opposite ("unlock", "disarm").
+_NEGATIONS = ("un", "dis", "de", "in", "non")
 
 _WAKE = re.compile(r"^(?:(?:hey|ok|okay)\s+)?alfred\s+")
 _POLITE_START = re.compile(r"^please\s+")
@@ -45,14 +51,40 @@ def _forms(text: str) -> list[str]:
     return [f for f in forms if f]
 
 
-def _similar(a: str, b: str) -> float:
-    if len(b) < FUZZY_MIN_CHARS or abs(len(a.split()) - len(b.split())) > 1:
+def _close_words(said: str, phrase: str) -> bool:
+    """Could `said` be an STT slip for `phrase` ("times" for "time", "bight" for "night")?
+
+    Never for short words ("on" / "off") or a word and its negation ("unlock" / "lock"):
+    those flip a routine's meaning.
+    """
+    if min(len(said), len(phrase)) < 3:
+        return False
+    longer, shorter = (said, phrase) if len(said) > len(phrase) else (phrase, said)
+    if any(longer == p + shorter for p in _NEGATIONS):
+        return False
+    return SequenceMatcher(None, said, phrase).ratio() >= WORD_RATIO
+
+
+def _similar(said: str, phrase: str) -> float:
+    """How closely `said` matches `phrase`, word by word; 0 if it can't be a slip for it.
+
+    Only one word may differ, and only by a close spelling. Filler words ("the", "my") are
+    ignored, and spacing doesn't matter ("bedtime" for "bed time").
+    """
+    if len(phrase) < FUZZY_MIN_CHARS:
         return 0.0
-    return max(
-        SequenceMatcher(None, a, b).ratio(),
-        # "bedtime" for "bed time"
-        SequenceMatcher(None, a.replace(" ", ""), b.replace(" ", "")).ratio(),
-    )
+    if said.replace(" ", "") == phrase.replace(" ", ""):
+        return 1.0
+    said_words = [w for w in said.split() if w not in _FILLER]
+    phrase_words = [w for w in phrase.split() if w not in _FILLER]
+    if said_words == phrase_words:
+        return 1.0
+    if len(said_words) != len(phrase_words):
+        return 0.0
+    differing = [(s, p) for s, p in zip(said_words, phrase_words, strict=True) if s != p]
+    if len(differing) != 1 or not _close_words(*differing[0]):
+        return 0.0
+    return SequenceMatcher(None, " ".join(said_words), " ".join(phrase_words)).ratio()
 
 
 def match(text: str, routines: Iterable[Routine]) -> Routine | None:

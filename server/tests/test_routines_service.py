@@ -275,3 +275,14 @@ def test_turn_info_looks_like_a_routed_turn() -> None:
     assert info["cost_gbp"] is None and info["input_tokens"] == 0
     assert info["routine"]["name"] == "movie time"
     assert len(info["routine"]["steps"]) == 2
+
+
+def test_delays_are_capped_at_30_seconds_in_total() -> None:
+    from pydantic import ValidationError
+
+    steps = [s.model_copy(update={"delay_s": 20}) for s in movie_time().steps]
+    with pytest.raises(ValidationError, match="more than 30 seconds"):
+        movie_time(steps=steps)
+    with pytest.raises(ValidationError):
+        RoutineStep(connector="home_assistant", tool="ha_turn_on", delay_s=31)
+    movie_time(steps=[steps[0], steps[1].model_copy(update={"delay_s": 10})])

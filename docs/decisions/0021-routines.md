@@ -39,7 +39,7 @@ It's stored as JSON in the Postgres `routines` table (`alfred_server/routines/`)
 **Run directly on the connector tool layer** (`routines/runner.py`):
 - Each step's tool is taken from the same loader the router uses (`ConnectorService.load_tools`), so disabled or disconnected connectors' steps fail ("Home Assistant isn't connected.").
 - Each tool is called through Agno's `FunctionCall`, which validates the arguments.
-- Steps run in order, waiting `delay_s` first.
+- Steps run in order, waiting `delay_s` first. A run holds its request (or voice turn) until it ends, so a routine's delays may add up to 30 s at most; longer waits belong to schedules (STU-127).
 - A failed step is reported by number and description ("Step 2 (turn on media_player TV) failed: Home Assistant isn't reachable right now.") and the rest still run, unless that step has `stop_on_error`.
 - A tool that never raises reports failure by returning a `ToolError` (a `str` subclass in `connectors/models.py`). The Home Assistant and Spotify toolkits do so on every failure path, and agents see the same sentence as before.
 - Each run logs `routine '<name>' ran N of M steps in X ms (no LLM, trigger <device>)`. The result is the turn's `turn` / `turn.metadata` (`specialist: "routine"`, no model, no tokens, the steps and timing).

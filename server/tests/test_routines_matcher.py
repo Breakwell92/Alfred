@@ -77,3 +77,31 @@ def test_two_equally_close_routines_match_neither() -> None:
     routines = [routine("movie night"), routine("movie light")]
     assert match("movie nights", routines) is not None  # closest wins
     assert match("movie bight", routines) is None  # equally close: ask the router
+
+
+@pytest.mark.parametrize(
+    ("said", "saved"),
+    [
+        ("turn the heating on", "turn the heating off"),
+        ("turn the heating off", "turn the heating on"),
+        ("lights up", "lights down"),
+        ("unlock everything", "lock everything"),
+        ("movie time now", "movie time"),
+    ],
+)
+def test_a_fuzzy_match_never_flips_or_changes_a_word(said: str, saved: str) -> None:
+    assert match(said, [routine(saved)]) is None
+
+
+@pytest.mark.parametrize(
+    ("said", "saved"),
+    [
+        ("movie times", "movie time"),
+        ("the movie time", "movie time"),
+        ("bedtime", "bed time"),
+        ("good mornin", "good morning"),
+    ],
+)
+def test_fuzzy_matches_absorb_stt_slips(said: str, saved: str) -> None:
+    found = match(said, [routine(saved)])
+    assert found is not None and found.name == saved

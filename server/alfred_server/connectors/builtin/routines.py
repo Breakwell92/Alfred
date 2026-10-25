@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from agno.tools import Toolkit
@@ -38,10 +38,30 @@ def _phrases(args: Mapping[str, Any]) -> list[str]:
     return [str(p) for p in phrases] if isinstance(phrases, list) else [str(phrases)]
 
 
-def summarise_save(policy: ToolPolicy, args: Mapping[str, Any]) -> str:
+def _routine_exists(name: str) -> bool:
+    """Is there a routine called `name`? False if routines can't be read.
+
+    Only asks the service once it's been built (it is, by the toolkit that made the call), so
+    a summary never opens a database connection of its own.
+    """
+    if not get_routine_service.cache_info().currsize:
+        return False
+    try:
+        return get_routine_service().find(name) is not None
+    except Exception:
+        return False
+
+
+def summarise_save(
+    policy: ToolPolicy,
+    args: Mapping[str, Any],
+    exists: Callable[[str], bool] = _routine_exists,
+) -> str:
     """The read-back for `save_routine`: name, phrases and every step, flagging steps that
-    normally ask first (approving the save approves them for this routine)."""
+    normally ask first (approving the save approves them for this routine). Says "Replace"
+    when a routine of that name exists, since saving overwrites it."""
     name = str(args.get("name") or "routine")
+    verb = "Replace" if exists(name) else "Save"
     parts = []
     for raw in args.get("steps") or []:
         try:
@@ -56,7 +76,7 @@ def summarise_save(policy: ToolPolicy, args: Mapping[str, Any]) -> str:
             text += " (it will run without asking each time)"
         parts.append(text)
     said = " or ".join(f"'{p}'" for p in _phrases(args)) or f"'{name}'"
-    return f"Save the routine '{name}', run by saying {said}: {join_summaries(parts)}"
+    return f"{verb} the routine '{name}', run by saying {said}: {join_summaries(parts)}"
 
 
 class RoutinesTools(Toolkit):
@@ -110,8 +130,8 @@ class RoutinesTools(Toolkit):
             steps: The tool calls, in order. Each is {"connector": ..., "tool": ..., "args":
                 {...}} using a connector, tool and arguments from list_step_tools, with
                 concrete values (real room and device names, no placeholders). Optional:
-                "delay_s" (seconds to wait first) and "stop_on_error" (true to skip the rest
-                if this step fails).
+                "delay_s" (seconds to wait first; 30 in total at most) and "stop_on_error"
+                (true to skip the rest if this step fails).
             reply: What to say after it runs; leave out to say the name.
 
         Returns:

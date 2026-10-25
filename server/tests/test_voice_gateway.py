@@ -48,7 +48,13 @@ from alfred_server.voice.gateway.protocol import (
 from alfred_server.voice.gateway.routes import voice_stt_dependency, voice_tts_dependency
 from alfred_server.voice.gateway.yes_no import classify_yes_no
 from alfred_server.voice.stt import FasterWhisperSTT
-from alfred_server.voice.tts import OUTPUT_SAMPLE_RATE, VoiceConfig, split_sentences
+from alfred_server.voice.tts import (
+    OUTPUT_SAMPLE_RATE,
+    SpokenSegment,
+    VoiceConfig,
+    estimate_word_timings,
+    split_sentences,
+)
 from tests.llm_fakes import (
     completion,
     reply,
@@ -84,21 +90,26 @@ class FakeWhisper:
 
 
 class FakeTTS:
-    """`TextToSpeech` that renders each sentence as the bytes `<sentence>`."""
+    """`TextToSpeech` that renders each sentence as the bytes `<sentence>`.
+
+    Word timings are estimated as if those bytes were the PCM (two bytes a sample).
+    """
 
     def __init__(self) -> None:
         self.default_voice = VoiceConfig("piper", "en_GB-alan-medium")
         self.spoken: list[str] = []
         self.fail = False
 
-    async def synthesize(
+    async def synthesize_segments(
         self, text_stream: AsyncIterator[str], voice: VoiceConfig
-    ) -> AsyncIterator[bytes]:
+    ) -> AsyncIterator[SpokenSegment]:
         async for sentence in split_sentences(text_stream):
             if self.fail:
                 raise RuntimeError("TTS broke")
             self.spoken.append(sentence)
-            yield f"<{sentence}>".encode()
+            pcm = f"<{sentence}>".encode()
+            seconds = len(pcm) / 2 / OUTPUT_SAMPLE_RATE
+            yield SpokenSegment(pcm, estimate_word_timings(sentence, 0.0, seconds))
 
     def voices(self) -> list[Any]:
         return []
@@ -156,6 +167,8 @@ class Turn:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
         self.audio: list[tuple[str, bytes]] = []
+        # `reply.words` and audio frames in the order they arrived (`"audio"` for a frame).
+        self.order: list[str] = []
 
     def types(self) -> list[str]:
         return [m["type"] for m in self.messages]
@@ -182,9 +195,12 @@ def receive_turn(ws: WebSocketTestSession) -> Turn:
             raise AssertionError(f"socket closed mid-turn: {frame}")
         if frame.get("bytes") is not None:
             turn.audio.append(parse_audio_frame(frame["bytes"]))
+            turn.order.append("audio")
             continue
         data = json.loads(frame["text"])
         turn.messages.append(data)
+        if data["type"] == "reply.words":
+            turn.order.append("reply.words")
         if data["type"] in ("reply.audio.end", "error", "turn.cancelled"):
             return turn
 
@@ -406,6 +422,34 @@ def test_a_full_turn(harness: VoiceHarness) -> None:
     assert turn.types()[-2:] == ["turn.metadata", "reply.audio.end"]
     # STT got exactly the audio that was sent.
     assert len(harness.whisper.audio[0]) == len(pcm) // 2
+
+
+def test_word_timings_come_before_each_segments_audio(harness: VoiceHarness) -> None:
+    harness.hear("Wake me up.")
+    harness.reply_with(
+        route_completion(level="simple", tools=0),
+        streamed_completion("Alarm set for 7:30 am. Sleep well!"),
+    )
+
+    with harness.connect() as ws:
+        hello(ws)
+        turn = speak(ws)
+
+    batches = [m["words"] for m in turn.messages if m["type"] == "reply.words"]
+    assert [[w["word"] for w in b] for b in batches] == [
+        ["Alarm", "set", "for", "7:30", "am."],
+        ["Sleep", "well!"],
+    ]
+    # Each batch arrives just before its segment's audio, timed from the start of the reply.
+    assert turn.order == ["reply.words", "audio", "reply.words", "audio"]
+    first_pcm = len(turn.audio[0][1]) // 2
+    assert batches[1][0]["start_ms"] >= round(first_pcm * 1000 / OUTPUT_SAMPLE_RATE)
+    times = [(w["start_ms"], w["end_ms"]) for b in batches for w in b]
+    assert all(s <= e for s, e in times)
+    assert all(e1 <= s2 for (_, e1), (s2, _) in zip(times, times[1:], strict=False))
+    # Times and amounts are picked out; the flag is left off other words.
+    assert [w["word"] for b in batches for w in b if w.get("emphasis")] == ["7:30", "am."]
+    assert "emphasis" not in batches[0][0]
 
 
 def test_turn_metadata_says_how_it_ran_and_how_long_it_took(harness: VoiceHarness) -> None:

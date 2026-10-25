@@ -6,7 +6,9 @@ The voice gateway depends only on the `TextToSpeech` protocol. The default imple
 fallback. Engines, benchmarks and the output format: docs/decisions/0006-tts.md.
 
 Output format, whatever the engine: mono, signed 16-bit little-endian PCM at
-`OUTPUT_SAMPLE_RATE` (24 kHz), in chunks of at most `CHUNK_BYTES` (200 ms).
+`OUTPUT_SAMPLE_RATE` (24 kHz), in chunks of at most `CHUNK_BYTES` (200 ms). Each segment also
+carries estimated word timings, so the app can highlight the word being spoken
+(`estimate_word_timings`, docs/decisions/0023-transmitting-screen.md).
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -94,14 +96,33 @@ class VoiceInfo:
     gender: Literal["female", "male"] | None = None
 
 
-class TextToSpeech(Protocol):
-    def synthesize(
-        self, text_stream: AsyncIterator[str], voice: VoiceConfig
-    ) -> AsyncIterator[bytes]:
-        """Speak streamed text (tokens of any size) as PCM chunks (see module docstring).
+@dataclass(frozen=True)
+class WordTiming:
+    """When one word of a segment is heard, in ms from the start of the segment's audio."""
 
-        Implemented as an async generator (`async def ... yield`). Audio for the first sentence
-        is yielded while later text is still arriving.
+    word: str
+    start_ms: int
+    end_ms: int
+    emphasis: bool = False
+    """A value worth picking out on screen: a number, time or amount."""
+
+
+@dataclass(frozen=True)
+class SpokenSegment:
+    """One synthesized sentence or clause: its PCM (pause included) and its words' timings."""
+
+    pcm: bytes
+    words: tuple[WordTiming, ...]
+
+
+class TextToSpeech(Protocol):
+    def synthesize_segments(
+        self, text_stream: AsyncIterator[str], voice: VoiceConfig
+    ) -> AsyncIterator[SpokenSegment]:
+        """Speak streamed text (tokens of any size), one `SpokenSegment` per sentence or clause.
+
+        Implemented as an async generator (`async def ... yield`). The first segment is
+        yielded while later text is still arriving.
         """
         ...
 
@@ -223,6 +244,92 @@ async def split_sentences(
             yield segment
     for segment in splitter.flush():
         yield segment
+
+
+# --- Word timings ----------------------------------------------------------------------------
+
+# Neither engine reports when each word is spoken (our Kokoro export has no `duration` output),
+# so timings are estimated per segment: the words share the segment's speech by weight. Digits
+# are spoken as several syllables each; punctuation is a pause. Weights fitted against Whisper's
+# word timestamps on Kokoro and Piper replies (docs/decisions/0023-transmitting-screen.md).
+_DIGIT_WEIGHT = 3.5
+_SENTENCE_GAP = 4.0
+_CLAUSE_GAP = 1.0
+_SPEECH_FRAME_S = 0.01
+_SPEECH_THRESHOLD = 0.05
+"""A 10 ms frame is speech when its RMS is above this fraction of the loudest frame's."""
+_AMOUNT_MARKS = frozenset("£$€%")
+_AFTER_NUMBER = frozenset({"am", "pm", "a.m", "p.m", "o'clock", "percent"})
+
+
+def estimate_word_timings(text: str, start_s: float, end_s: float) -> tuple[WordTiming, ...]:
+    """Spread the words of `text` over the speech between `start_s` and `end_s`.
+
+    Each word gets time in proportion to its letters (digits count more), and punctuation
+    after it leaves a gap. Tokens with nothing speakable ("—") only add a gap.
+    """
+    tokens = text.split()
+    spoken: list[tuple[str, float, float]] = []  # word, weight, gap after
+    for token in tokens:
+        core = sum(_DIGIT_WEIGHT if c.isdigit() else 1.0 for c in token if c.isalnum())
+        gap = _punctuation_gap(token)
+        if core == 0:
+            if spoken:
+                word, weight, before = spoken[-1]
+                spoken[-1] = (word, weight, before + gap)
+            continue
+        spoken.append((token, core, gap))
+    if not spoken:
+        return ()
+    # The pause after the last word is outside the speech.
+    spoken[-1] = (spoken[-1][0], spoken[-1][1], 0.0)
+    total = sum(weight + gap for _, weight, gap in spoken)
+    scale = max(end_s - start_s, 0.0) / total
+    cursor = start_s
+    words: list[WordTiming] = []
+    previous = ""
+    for word, weight, gap in spoken:
+        begin = cursor
+        cursor += weight * scale
+        words.append(
+            WordTiming(
+                word, round(begin * 1000), round(cursor * 1000), _is_emphasis(word, previous)
+            )
+        )
+        cursor += gap * scale
+        previous = word
+    return tuple(words)
+
+
+def _punctuation_gap(token: str) -> float:
+    end = token.rstrip(_CLOSERS)
+    if end.endswith((".", "!", "?", "…")):
+        return _SENTENCE_GAP
+    if end.endswith((",", ";", ":")) or end in ("—", "–", "-"):
+        return _CLAUSE_GAP
+    return 0.0
+
+
+def _is_emphasis(word: str, previous: str) -> bool:
+    """Numbers, times and amounts: "7:30", "£12", "40%", and "pm" after a number."""
+    if any(c.isdigit() for c in word) or any(c in _AMOUNT_MARKS for c in word):
+        return True
+    bare = word.strip("\"'“”‘’()[].,;:!?").lower()
+    return bare in _AFTER_NUMBER and any(c.isdigit() for c in previous)
+
+
+def speech_bounds(audio: np.ndarray, sample_rate: int) -> tuple[float, float]:
+    """Seconds where speech starts and ends in `audio`, ignoring quiet at either end."""
+    frame = max(1, int(sample_rate * _SPEECH_FRAME_S))
+    count = len(audio) // frame
+    if count == 0:
+        return 0.0, len(audio) / sample_rate
+    frames = np.asarray(audio[: count * frame], dtype=np.float32).reshape(count, frame)
+    rms = np.sqrt(np.mean(frames**2, axis=1))
+    loud = np.flatnonzero(rms > rms.max() * _SPEECH_THRESHOLD)
+    if rms.max() == 0 or len(loud) == 0:
+        return 0.0, len(audio) / sample_rate
+    return loud[0] * frame / sample_rate, min(len(audio), (loud[-1] + 1) * frame) / sample_rate
 
 
 # --- Engines ---------------------------------------------------------------------------------
@@ -400,17 +507,17 @@ class LocalTTS:
         engines = [e for e in (self._kokoro, self._piper) if e is not None]
         return [v for engine in engines for v in engine.voices()]
 
-    async def synthesize(
+    async def synthesize_segments(
         self, text_stream: AsyncIterator[str], voice: VoiceConfig
-    ) -> AsyncIterator[bytes]:
+    ) -> AsyncIterator[SpokenSegment]:
         voice = self._resolve(voice)
-        queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue(maxsize=4)
+        queue: asyncio.Queue[SpokenSegment | BaseException | None] = asyncio.Queue(maxsize=4)
 
         async def produce() -> None:
             try:
                 async for segment in split_sentences(text_stream):
-                    pcm = await asyncio.to_thread(self._render, segment, voice)
-                    await queue.put(pcm)
+                    spoken = await asyncio.to_thread(self._render, segment, voice)
+                    await queue.put(spoken)
             except Exception as exc:
                 await queue.put(exc)
             else:
@@ -422,10 +529,17 @@ class LocalTTS:
             while (item := await queue.get()) is not None:
                 if isinstance(item, BaseException):
                     raise item
-                for start in range(0, len(item), CHUNK_BYTES):
-                    yield item[start : start + CHUNK_BYTES]
+                yield item
         finally:
             producer.cancel()
+
+    async def synthesize(
+        self, text_stream: AsyncIterator[str], voice: VoiceConfig
+    ) -> AsyncIterator[bytes]:
+        """Just the audio, in chunks of at most `CHUNK_BYTES` (for scripts and benchmarks)."""
+        async for segment in self.synthesize_segments(text_stream, voice):
+            for chunk in pcm_chunks(segment.pcm):
+                yield chunk
 
     def _resolve(self, voice: VoiceConfig) -> VoiceConfig:
         if voice.engine == "kokoro" and self._kokoro is None:
@@ -447,8 +561,8 @@ class LocalTTS:
             raise TTSUnavailableError(f"{name} is not loaded")
         return engine
 
-    def _render(self, text: str, voice: VoiceConfig) -> bytes:
-        """Synthesize one segment and convert it to output PCM. Runs in a worker thread."""
+    def _render(self, text: str, voice: VoiceConfig) -> SpokenSegment:
+        """Synthesize one segment, time its words, convert it to output PCM. Worker thread."""
         # Pitch: synthesize slower by the pitch factor, then resample as if it had been
         # recorded at a higher rate. Duration ends up as requested; pitch moves by the factor.
         factor = voice.pitch_factor
@@ -469,15 +583,31 @@ class LocalTTS:
                 )
                 audio, rate = self._piper.synthesize(text, self._fallback_voice, speed)
         logger.debug("TTS %d chars in %.0f ms", len(text), (time.perf_counter() - started) * 1000)
-        return to_pcm16(audio, rate * factor)
+        audio = resample(audio, rate * factor)
+        start_s, end_s = speech_bounds(audio, OUTPUT_SAMPLE_RATE)
+        return SpokenSegment(
+            to_pcm16(audio, OUTPUT_SAMPLE_RATE), estimate_word_timings(text, start_s, end_s)
+        )
 
 
-def to_pcm16(audio: np.ndarray, sample_rate: float) -> bytes:
-    """Resample float samples to `OUTPUT_SAMPLE_RATE`, add the segment pause, encode as PCM16."""
+def pcm_chunks(pcm: bytes) -> Iterator[bytes]:
+    """`pcm` in pieces of at most `CHUNK_BYTES` (200 ms), as sent to the device."""
+    for start in range(0, len(pcm), CHUNK_BYTES):
+        yield pcm[start : start + CHUNK_BYTES]
+
+
+def resample(audio: np.ndarray, sample_rate: float) -> np.ndarray:
+    """Float samples at `sample_rate` → float32 at `OUTPUT_SAMPLE_RATE`."""
     if round(sample_rate) != OUTPUT_SAMPLE_RATE and len(audio):
         import soxr
 
         audio = soxr.resample(audio, sample_rate, OUTPUT_SAMPLE_RATE, quality="HQ")
+    return np.asarray(audio, dtype=np.float32)
+
+
+def to_pcm16(audio: np.ndarray, sample_rate: float) -> bytes:
+    """Resample float samples to `OUTPUT_SAMPLE_RATE`, add the segment pause, encode as PCM16."""
+    audio = resample(audio, sample_rate)
     pause = np.zeros(int(SEGMENT_PAUSE_S * OUTPUT_SAMPLE_RATE), dtype=np.float32)
     audio = np.concatenate([np.asarray(audio, dtype=np.float32), pause])
     return (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()

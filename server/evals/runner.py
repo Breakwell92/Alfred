@@ -4,13 +4,19 @@ Each case is routed by the real router (classifier on `local-router`, then model
 then run on its specialist with every tool in mock mode (`evals/mocks.py`).
 
 Model selection is asked with a budget that allows any cloud alias, so the score shows where
-the router *would* send the request (`max_tier`). The run itself never goes to cloud unless
-`allow_cloud` is set: with `model_alias` it runs on that alias, otherwise on the router's
-choice with cloud swapped for the local alias the router would use without it.
+the router *would* send the request (`max_tier`); nothing is spent on that. The run itself never
+goes to cloud unless `allow_cloud` is set, and then only when the real budget service allows it:
+
+- `model_alias` set: the specialist runs on that alias alone, never retried on another model, so
+  candidates are compared like for like. A cloud alias needs `allow_cloud`, and each case asks
+  the budget service first.
+- otherwise: the run uses the router's own choice under the run budget (cloud off, or the real
+  budget service with `allow_cloud`), cloud fallback included.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -23,15 +29,23 @@ from agno.models.base import Model
 from alfred_server.agents.context import RequestContext
 from alfred_server.agents.registry import Specialist, SpecialistRegistry
 from alfred_server.agents.router import (
+    EXPECTED_OUTPUT_TOKENS,
     BudgetGate,
     Classification,
     ModelChoice,
     ModelFactory,
     Route,
     Router,
+    estimate_prompt_tokens,
 )
 from alfred_server.budget.models import BudgetDecision, EscalationReason
-from alfred_server.models.gateway import MODEL_ALIASES, CallMetadata, ModelAlias, gateway_model
+from alfred_server.models.gateway import (
+    LOCAL_ALIASES,
+    MODEL_ALIASES,
+    CallMetadata,
+    ModelAlias,
+    gateway_model,
+)
 from evals.cases import ANY_TOOL, EvalCase
 from evals.mocks import MockTools, ToolCall
 
@@ -69,6 +83,19 @@ class CloudOffBudget:
         reason: EscalationReason = "auto",
     ) -> BudgetDecision:
         return BudgetDecision(False, "cloud_disabled", None, "Cloud is off for evals.")
+
+
+class BudgetRefusedError(RuntimeError):
+    """The budget service refused a cloud run."""
+
+
+class CloudNotAllowedError(ValueError):
+    """A cloud `model_alias` was asked for without `allow_cloud`."""
+
+
+def is_cloud_alias(alias: str) -> bool:
+    """A server cloud alias. Other proxy names (`eval-candidate`) are local eval candidates."""
+    return alias in MODEL_ALIASES and alias not in LOCAL_ALIASES
 
 
 def gateway_factory(alias: ModelAlias, metadata: CallMetadata, **kwargs: Any) -> Model:
@@ -185,35 +212,56 @@ class EvalRunner:
         *,
         model_alias: str | None = None,
         allow_cloud: bool = False,
+        budget: BudgetGate | None = None,
         model_factory: ModelFactory = gateway_factory,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
+        """`budget` decides real cloud runs when `allow_cloud` is set (default: the budget
+        service, so Dan's cap, tiers and providers apply). Raises `CloudNotAllowedError` for a
+        cloud `model_alias` without `allow_cloud`.
+        """
+        if model_alias is not None and is_cloud_alias(model_alias) and not allow_cloud:
+            raise CloudNotAllowedError(
+                f"--model-alias {model_alias} is a cloud model: add --allow-cloud to spend on it"
+            )
+        if allow_cloud and budget is None:
+            from alfred_server.budget.service import get_budget_service
+
+            budget = get_budget_service()
         self.registry = registry
         self.fixtures = fixtures
         self.model_alias = model_alias
         self.allow_cloud = allow_cloud
+        self.budget: BudgetGate = budget if allow_cloud and budget is not None else CloudOffBudget()
         self.model_factory = model_factory
         self.clock = clock
         self.db = InMemoryDb()
         self._runs = 0
 
-    async def _run_choice(
-        self, router: Router, text: str, c: Classification, routed: ModelChoice
-    ) -> ModelChoice:
-        if self.model_alias is not None:
-            return ModelChoice(cast(ModelAlias, self.model_alias), "eval: --model-alias")
-        if routed.tier == "cloud" and not self.allow_cloud:
-            # `router` has cloud off, so this is the local alias it would pick.
-            return await router.select_model(text, c)
-        return routed
+    async def _forced_choice(self, alias: ModelAlias, text: str, c: Classification) -> ModelChoice:
+        """`model_alias` as the run's model; a cloud one only if the budget allows it."""
+        if not is_cloud_alias(alias):
+            return ModelChoice(alias, "eval: --model-alias")
+        decision = await asyncio.to_thread(
+            self.budget.decide,
+            alias,
+            estimate_prompt_tokens(text, c),
+            EXPECTED_OUTPUT_TOKENS,
+            "user_request",
+        )
+        if not decision.allowed:
+            raise BudgetRefusedError(f"budget refused {alias}: {decision.message}")
+        return ModelChoice(alias, "eval: --model-alias", decision.code, decision.tier)
 
     async def run_case(self, case: EvalCase) -> CaseResult:
         self._runs += 1
         ctx = case.request_context(session_id=f"eval-{case.id}-{self._runs}")
         tools = MockTools(self.fixtures, ctx)
         result = CaseResult(case.id, alias=self.model_alias or "router")
-        budget: BudgetGate = AllowAllBudget() if self.allow_cloud else CloudOffBudget()
-        router = Router(self.registry, budget, self.model_factory, self.db)
+        # Runs: cloud off, or the real budget with --allow-cloud. A forced alias is run alone.
+        run_budget = CloudOffBudget() if self.model_alias is not None else self.budget
+        router = Router(self.registry, run_budget, self.model_factory, self.db)
+        # Decides only (nothing runs on it): where the router would send the request.
         selector = Router(self.registry, AllowAllBudget(), self.model_factory, self.db)
 
         start = self.clock()
@@ -227,7 +275,11 @@ class EvalRunner:
             result.routed_alias, result.routed_tier = routed.alias, routed.tier
             result.routing_reason = routed.reason
 
-            choice = await self._run_choice(router, case.input, classification, routed)
+            if self.model_alias is not None:
+                alias = cast(ModelAlias, self.model_alias)
+                choice = await self._forced_choice(alias, case.input, classification)
+            else:
+                choice = await router.select_model(case.input, classification)
             result.alias = choice.alias
             route = Route(classification, _mocked(specialist, tools), choice)
             reply = await router.run(route, case.input, ctx)

@@ -55,10 +55,14 @@ All runs were `100% GPU` in `ollama ps`. All three models return a correct nativ
 `0012-eval-harness.md`), router `qwen3:4b-instruct-2507` for both, two runs each. Latency is per
 request (classifier + specialist, tool round trips included), after a warm-up call.
 
-| Model | Passed (run 1 / run 2) | Tool checks | Median | p90 | Routing |
-| --- | --- | --- | --- | --- | --- |
-| `gpt-oss:20b` | 14/16 / 14/16 | 9/11 | 1.2 s | 2.5–3.4 s | ~370 ms |
-| `mistral-small3.2:24b` | 13/16 / 14/16 | 10/11 | 0.8–1.0 s | 4.2–4.5 s | ~360 ms |
+Columns are the report's (`tools` = cases whose required tool calls were all made, `forbidden`
+= cases that called no forbidden tool), each as run 1 / run 2. Run 2 has one fewer `tools` case
+because `day-of-week` stopped requiring `get_time` between runs.
+
+| Model | passed | tools | forbidden | median ms | p90 ms | route ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gpt-oss:20b` | 14/16 / 14/16 | 5/6 / 4/5 | 9/9 / 9/9 | 1201 / 1245 | 3368 / 2487 | 386 / 360 |
+| `mistral-small3.2:24b` | 13/16 / 14/16 | 5/6 / 5/5 | 9/9 / 9/9 | 842 / 958 | 4488 / 4207 | 361 / 353 |
 
 - Both picked the right specialist and called no forbidden tools on every case.
 - `gpt-oss` once answered "what time is it here?" (New York context) without calling `get_time`

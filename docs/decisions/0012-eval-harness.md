@@ -29,9 +29,13 @@ working as specialists and connectors are added. Running it must never change an
   mocked without connector changes. A tool without a fixture gets `{"ok": true}` and is listed.
 - **Routing** is the real `Router`: classification on `local-router`, then `select_model`
   asked with a budget gate that allows every cloud alias, so the score shows where the router
-  *would* send the request (`max_tier`). The run itself uses a router with cloud off, so it never
-  falls back to cloud; with `--model-alias` the specialist runs on that alias, otherwise on the
-  router's local choice. `--allow-cloud` lets runs use cloud (costs money).
+  *would* send the request (`max_tier`). That gate only decides; nothing runs on it.
+- **Runs** use a router with cloud off by default, so they never go to cloud. With
+  `--allow-cloud` the run router uses the real budget service, so every cloud call is decided by
+  Dan's cap, tiers and providers like any other (`CLAUDE.md`); evals never bypass the budget.
+  With `--model-alias` the specialist runs on that alias alone, with no fallback to another
+  model, so candidates are scored like for like; a cloud alias needs `--allow-cloud` and is
+  checked with `decide` before each case.
 - **Scores** per case: specialist, required tools, forbidden tools, tier, reply text, plus
   latency (routing and total, after an untimed warm-up call per model) and tokens. A case passes
   when every check it has passes. Reports are markdown (summary table per alias and a per-case

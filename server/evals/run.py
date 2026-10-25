@@ -33,7 +33,13 @@ from evals.report import (
     summary_table,
     write_reports,
 )
-from evals.runner import CaseResult, EvalRunner, gateway_factory
+from evals.runner import (
+    CaseResult,
+    CloudNotAllowedError,
+    EvalRunner,
+    gateway_factory,
+    is_cloud_alias,
+)
 
 WARM_UP_TEXT = "Say OK."
 
@@ -51,7 +57,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--allow-cloud",
         action="store_true",
-        help="let runs use cloud models when the router picks one (costs money)",
+        help="let runs use cloud models when the budget service allows them (costs money)",
     )
     p.add_argument("--reports-dir", type=Path, default=REPORTS_DIR)
     p.add_argument("--no-warm-up", action="store_true", help="skip the untimed warm-up call")
@@ -60,8 +66,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 async def _warm_up(alias: str | None) -> None:
-    """One untimed call per model so load time isn't counted against the first case."""
+    """One untimed call per local model so load time isn't counted against the first case.
+
+    Cloud models need no warm-up, and a call would be spent without asking the budget.
+    """
     for name in ("local-router", alias or "local-main"):
+        if is_cloud_alias(name):
+            continue
         model = gateway_factory(cast(ModelAlias, name), CallMetadata(agent="eval"))
         await Agent(model=model, telemetry=False).arun(WARM_UP_TEXT)
 
@@ -76,13 +87,22 @@ async def run(args: argparse.Namespace) -> int:
     fixtures = load_fixtures()
     registry = get_registry()
     aliases: list[str | None] = list(args.model_alias) or [None]
+    # Checked before anything runs: a cloud alias without --allow-cloud is refused.
+    try:
+        runners = [
+            EvalRunner(registry, fixtures, model_alias=alias, allow_cloud=args.allow_cloud)
+            for alias in aliases
+        ]
+    except CloudNotAllowedError as e:
+        print(e, file=sys.stderr)
+        return 2
 
+    started = datetime.now()
     results: dict[str, list[CaseResult]] = {}
-    for alias in aliases:
+    for alias, runner in zip(aliases, runners, strict=True):
         label = alias or "router"
         if not args.no_warm_up:
             await _warm_up(alias)
-        runner = EvalRunner(registry, fixtures, model_alias=alias, allow_cloud=args.allow_cloud)
         results[label] = []
         for case in cases:
             result = await runner.run_case(case)
@@ -90,7 +110,6 @@ async def run(args: argparse.Namespace) -> int:
             status = "pass" if result.passed else "FAIL " + "; ".join(result.failures)
             print(f"[{label}] {case.id}: {status} ({result.total_ms:.0f} ms)", flush=True)
 
-    started = datetime.now()
     meta = {
         "date": started.isoformat(timespec="seconds"),
         "aliases": ", ".join(results),

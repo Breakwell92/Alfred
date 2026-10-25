@@ -14,8 +14,9 @@ from evals import run as cli
 from evals.cases import ANY_TOOL, EvalCase, load_cases, select
 from evals.mocks import UNMOCKED_RESULT, MockTools, ToolCall, load_fixtures
 from evals.report import render_json, render_markdown, summarise, summary_table, write_reports
-from evals.runner import CaseResult, EvalRunner, gateway_factory, score
+from evals.runner import CaseResult, CloudNotAllowedError, EvalRunner, gateway_factory, score
 from tests.llm_fakes import FakeProxy, reply, route_completion, tool_call_completion
+from tests.router_fakes import FakeBudget, deny
 
 
 def case(**fields: Any) -> EvalCase:
@@ -232,13 +233,74 @@ def test_runner_never_falls_back_to_cloud() -> None:
     assert r.reply == "Sorry, I'm not sure about that."
 
 
-def test_runner_allow_cloud_runs_on_router_choice() -> None:
-    h = Harness(route_completion(cloud=True, provider="gpt"), reply("Hi."), allow_cloud=True)
+CLOUD: list[ModelAlias] = ["cloud-claude", "cloud-gpt", "cloud-gemini"]
+
+
+def test_runner_allow_cloud_asks_the_real_budget() -> None:
+    budget = FakeBudget(CLOUD)
+    h = Harness(
+        route_completion(cloud=True, provider="gpt"), reply("Hi."), allow_cloud=True, budget=budget
+    )
 
     r = asyncio.run(h.runner.run_case(case()))
 
     assert h.models_called() == ["local-router", "cloud-gpt"]
+    assert budget.calls == [("cloud-gpt", "user_request")]
     assert r.passed
+
+
+def test_runner_allow_cloud_stays_local_when_budget_refuses() -> None:
+    budget = FakeBudget(CLOUD, {a: deny("exhausted") for a in CLOUD})
+    h = Harness(route_completion(level="complex"), reply("Hi."), allow_cloud=True, budget=budget)
+
+    r = asyncio.run(h.runner.run_case(case()))
+
+    assert h.models_called() == ["local-router", "local-main"]
+    assert (r.alias, r.routed_alias) == ("local-main", "cloud-claude")
+
+
+def test_forced_cloud_alias_needs_allow_cloud() -> None:
+    with pytest.raises(CloudNotAllowedError, match="--allow-cloud"):
+        EvalRunner(get_registry(), {}, model_alias="cloud-claude")
+    # Eval-only proxy names are local candidates.
+    EvalRunner(get_registry(), {}, model_alias="eval-candidate")
+
+
+def test_forced_cloud_alias_asks_the_budget_each_case() -> None:
+    budget = FakeBudget(decisions={"cloud-claude": deny("exhausted", "Over budget.")})
+    h = Harness(route_completion(), model_alias="cloud-claude", allow_cloud=True, budget=budget)
+
+    r = asyncio.run(h.runner.run_case(case()))
+
+    assert h.models_called() == ["local-router"]  # nothing ran on cloud
+    assert budget.calls == [("cloud-claude", "user_request")]
+    assert r.error == "BudgetRefusedError: budget refused cloud-claude: Over budget."
+
+    h = Harness(
+        route_completion(),
+        reply("Hi."),
+        model_alias="cloud-claude",
+        allow_cloud=True,
+        budget=FakeBudget(),
+    )
+    assert asyncio.run(h.runner.run_case(case())).passed
+    assert h.models_called() == ["local-router", "cloud-claude"]
+
+
+@pytest.mark.parametrize("alias", ["local-main", "eval-candidate"])
+def test_forced_alias_is_never_retried_elsewhere(alias: str) -> None:
+    h = Harness(
+        route_completion(),
+        reply("<<UNSURE>>"),
+        model_alias=alias,
+        allow_cloud=True,
+        budget=FakeBudget(CLOUD),
+    )
+
+    r = asyncio.run(h.runner.run_case(case()))
+
+    assert h.models_called() == ["local-router", alias]
+    assert r.reply == "Sorry, I'm not sure about that."
 
 
 def test_runner_records_errors() -> None:
@@ -277,6 +339,11 @@ def test_reports(tmp_path: Path) -> None:
 
 def test_cli_without_matching_cases() -> None:
     assert cli.main(["--case", "no-such-case"]) == 2
+
+
+def test_cli_refuses_cloud_alias_without_allow_cloud(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["--model-alias", "cloud-claude", "--tag", "smoke"]) == 2
+    assert "--allow-cloud" in capsys.readouterr().err
 
 
 def test_cli_parses_several_aliases() -> None:

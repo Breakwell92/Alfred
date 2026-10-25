@@ -20,11 +20,16 @@ uv run python -m evals.run --case time-now -v                       # one case, 
 It prints a line per case and a summary table, writes `reports/<time>-<aliases>.md` and `.json`
 (git-ignored), and exits 1 if any case failed.
 
-- `--model-alias` sets the model the specialist runs on. The classifier always runs on
-  `local-router`. Without it, the run uses the router's choice.
-- The router's model selection is asked with a budget that allows every cloud alias, so the
-  report shows where it *would* send each request (scored by `max_tier`). Runs stay local unless
-  `--allow-cloud` is given (that costs money, and bypasses Dan's budget settings).
+- `--model-alias` sets the model the specialist runs on, alone: a failed run is never retried
+  on another model, so candidates are compared like for like. The classifier always runs on
+  `local-router`. Without it, the run uses the router's choice (cloud fallback included).
+- The router's model selection is first asked with a budget that allows every cloud alias, so the
+  report shows where it *would* send each request (scored by `max_tier`). Nothing is spent on
+  that decision.
+- Runs stay local unless `--allow-cloud` is given. Then every cloud call goes through the real
+  budget service (`get_budget_service().decide`), so the cap, tiers and enabled providers apply
+  and a refusal keeps the run local (or fails the case, for a forced cloud alias). A cloud
+  `--model-alias` without `--allow-cloud` is refused before anything runs.
 - A model that isn't a server alias can be compared by serving it on the proxy as
   `eval-candidate`: set `LITELLM_EVAL_CANDIDATE_MODEL` (an Ollama tag) in `infra/.env` and
   restart LiteLLM. Only two models fit in VRAM next to each other, so the first case on each

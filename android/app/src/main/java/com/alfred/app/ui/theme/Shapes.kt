@@ -40,7 +40,16 @@ fun ChamferShape(cut: Dp, corners: Set<Corner> = DiagonalCorners): CutCornerShap
  * A flat-topped octagon, regular when the button is square: the main action button. A regular
  * octagon's corner cut is side × (1 − 1/√2).
  */
-val OctagonShape: CutCornerShape = CutCornerShape(CornerSize((1f - 1f / sqrt(2f)) * 100f))
+val OctagonShape: CutCornerShape = CutCornerShape(OctagonCut)
+
+/**
+ * The octagon's cut as a fraction of the shorter side. `CornerSize(Float)` would be pixels and
+ * `CornerSize(Int)` whole percent, so this computes it exactly.
+ */
+private object OctagonCut : CornerSize {
+    override fun toPx(shapeSize: Size, density: Density): Float =
+        shapeSize.minDimension * (1f - 1f / sqrt(2f))
+}
 
 /**
  * An elongated hexagon pointed at both ends, like the CUT IN pill. [point] is how far each tip

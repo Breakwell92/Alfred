@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -44,6 +45,8 @@ fun AlfredApp() {
     GridBackground(Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = Color.Transparent,
+            // A transparent container gives no content colour, so text would default to black.
+            contentColor = MaterialTheme.colorScheme.onBackground,
             bottomBar = {
                 NavigationBar {
                     Destination.entries.forEach { destination ->

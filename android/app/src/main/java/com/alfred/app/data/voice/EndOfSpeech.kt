@@ -1,23 +1,41 @@
 package com.alfred.app.data.voice
 
-/**
- * Decides when a hands-free turn has finished, from the mic frames being streamed. Push-to-talk
- * doesn't need one (the button ends the turn). One instance per turn.
- */
-fun interface EndOfSpeechDetector {
-    /** Feeds one PCM16 frame; true once the turn should end (stays true after that). */
-    fun onFrame(pcm: ByteArray): Boolean
+import com.alfred.app.data.voice.vad.EndpointReport
+import com.alfred.app.data.voice.vad.VadEngine
+
+/** What an [EndOfSpeechDetector] makes of the turn so far. */
+enum class Endpoint {
+    /** Keep listening. */
+    Continue,
+
+    /** The speaker has finished (or the turn hit its length limit): send it. */
+    End,
+
+    /** Nobody spoke: cancel the turn quietly instead of sending silence. */
+    NoSpeech,
 }
 
 /**
- * For turns the user starts on screen (push-to-talk, CUT IN): silence after speech ends the turn
- * (the Recording screen's "or go quiet"); nothing does before anyone speaks, and
- * [VoiceController] caps the length.
+ * Decides when a turn being listened to has finished, from the mic frames being streamed. One
+ * instance per turn. Silero VAD ([com.alfred.app.data.voice.vad.SileroEndOfSpeech], ADR 0024)
+ * in the app; [EnergyEndOfSpeech] when the model can't run.
  */
-fun goQuiet(): EndOfSpeechDetector = EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE)
+fun interface EndOfSpeechDetector {
+    /** Feeds one PCM16 frame. Once it returns something other than [Endpoint.Continue], it keeps returning that. */
+    fun onFrame(pcm: ByteArray): Endpoint
+}
 
 /**
- * A stopgap energy endpointer until Silero VAD (STU-69, ADR 0019). The noise floor is the
+ * For turns the user starts on screen (push-to-talk, CUT IN), when Silero isn't available or in
+ * tests: silence after speech ends the turn (the Recording screen's "or go quiet"); nothing does
+ * before anyone speaks, and [VoiceController] caps the length. The app uses
+ * [com.alfred.app.data.voice.vad.EndOfSpeechFactory.pushToTalk].
+ */
+fun goQuiet(held: () -> Boolean = { false }): EndOfSpeechDetector =
+    EnergyEndOfSpeech(noSpeechMillis = Int.MAX_VALUE, maxMillis = Int.MAX_VALUE, held = held)
+
+/**
+ * An energy endpointer, the fallback when Silero VAD can't load (ADR 0024). The noise floor is the
  * quietest 20 ms frame of the last 3 s, so a steady fan or TV sets its own level; a frame is
  * speech when it's well above that (and above an absolute minimum).
  *
@@ -25,6 +43,8 @@ fun goQuiet(): EndOfSpeechDetector = EnergyEndOfSpeech(noSpeechMillis = Int.MAX_
  * the recorder's start-up land. Speech has "started" only after [minSpeechMillis] of it, so a
  * click or a cough doesn't start the silence countdown. The turn ends after [silenceMillis] of
  * quiet once speech has started, after [noSpeechMillis] if it never does, or at [maxMillis].
+ * While [held] is true it never ends and the quiet countdown starts again. [onReport] is called
+ * once, when it ends.
  */
 class EnergyEndOfSpeech(
     private val silenceMillis: Int = 1_000,
@@ -34,20 +54,24 @@ class EnergyEndOfSpeech(
     private val speechOverNoise: Double = 3.0,
     private val ignoreStartMillis: Int = 300,
     private val minSpeechMillis: Int = 200,
+    private val held: () -> Boolean = { false },
+    private val onReport: (EndpointReport) -> Unit = {},
 ) : EndOfSpeechDetector {
     private val recent = DoubleArray(FLOOR_WINDOW_FRAMES)
     private var frames = 0
     private var elapsedMillis = 0
     private var quietMillis = 0
     private var speechMillis = 0
-    private var ended = false
+    private var speechStartMillis: Int? = null
+    private var lastSpeechMillis: Int? = null
+    private var result = Endpoint.Continue
 
     private val heardSpeech get() = speechMillis >= minSpeechMillis
 
-    override fun onFrame(pcm: ByteArray): Boolean {
-        if (ended) return true
+    override fun onFrame(pcm: ByteArray): Endpoint {
+        if (result != Endpoint.Continue) return result
         val samples = pcm.size / 2
-        if (samples == 0) return false
+        if (samples == 0) return result
         val millis = samples * 1000 / SAMPLE_RATE
         elapsedMillis += millis
         val level = pcm16Rms(pcm)
@@ -59,13 +83,42 @@ class EnergyEndOfSpeech(
         if (speech) {
             speechMillis += millis
             quietMillis = 0
+            if (heardSpeech && speechStartMillis == null) speechStartMillis = elapsedMillis - speechMillis
+            if (heardSpeech) lastSpeechMillis = elapsedMillis
         } else {
             quietMillis += millis
         }
-        ended = elapsedMillis >= maxMillis ||
-            (heardSpeech && quietMillis >= silenceMillis) ||
-            (!heardSpeech && elapsedMillis >= noSpeechMillis)
-        return ended
+        if (held()) {
+            quietMillis = 0
+            return result
+        }
+        result = when {
+            heardSpeech && (quietMillis >= silenceMillis || elapsedMillis >= maxMillis) -> Endpoint.End
+            !heardSpeech && elapsedMillis >= minOf(noSpeechMillis, maxMillis) -> Endpoint.NoSpeech
+            else -> Endpoint.Continue
+        }
+        if (result != Endpoint.Continue) report()
+        return result
+    }
+
+    private fun report() {
+        val last = lastSpeechMillis
+        val reason = when {
+            result == Endpoint.NoSpeech -> "no_speech"
+            quietMillis >= silenceMillis -> "silence"
+            else -> "max_length"
+        }
+        onReport(
+            EndpointReport(
+                endpoint = result,
+                reason = reason,
+                totalMillis = elapsedMillis,
+                speechStartMillis = speechStartMillis,
+                lastSpeechMillis = last,
+                latencyMillis = last?.let { elapsedMillis - it },
+                engine = VadEngine.Energy,
+            ),
+        )
     }
 
     private companion object {

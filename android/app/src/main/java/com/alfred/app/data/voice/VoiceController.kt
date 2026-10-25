@@ -88,7 +88,8 @@ data class MicMeter(
  * later, the wake-word service. Call it from the main thread; [scope] should be main-bound.
  *
  * A turn being listened to ends on [stopListening], when its [EndOfSpeechDetector] says so, or
- * at the longest utterance the server takes, whichever comes first.
+ * at the longest utterance the server takes, whichever comes first. A detector that hears nobody
+ * cancels it instead.
  */
 class VoiceController(
     private val connection: DeviceConnection,
@@ -159,10 +160,12 @@ class VoiceController(
 
     /**
      * Opens the mic and starts a turn. False if there's no usable connection. With [endOfSpeech]
-     * (hands-free turns, e.g. the wake word) the turn ends by itself when it says so; without,
-     * it lasts until [stopListening].
+     * (hands-free turns, e.g. the wake word, and push-to-talk's "or go quiet") the turn ends by
+     * itself when it says so; without, it lasts until [stopListening]. If it reports
+     * [Endpoint.NoSpeech], the turn is cancelled quietly (nothing is sent to be transcribed, no
+     * error) and [onNoSpeech] is called.
      */
-    fun startListening(endOfSpeech: EndOfSpeechDetector? = null): Boolean {
+    fun startListening(endOfSpeech: EndOfSpeechDetector? = null, onNoSpeech: () -> Unit = {}): Boolean {
         if (_state.value.phase == VoicePhase.Listening) return true
         val link = connection.state.value
         if (link !is LinkState.Connected) {
@@ -194,7 +197,14 @@ class VoiceController(
                     // Audio goes out first; the meter is extra.
                     connection.sendAudio(frame)
                     measure(frame)
-                    if (endOfSpeech?.onFrame(frame) == true && turnId == id) stopListening()
+                    when (endOfSpeech?.onFrame(frame)) {
+                        Endpoint.End -> if (turnId == id) stopListening()
+                        Endpoint.NoSpeech -> if (turnId == id) {
+                            cancel()
+                            onNoSpeech()
+                        }
+                        Endpoint.Continue, null -> Unit
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e

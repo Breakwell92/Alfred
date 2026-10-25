@@ -1,5 +1,6 @@
 package com.alfred.app.data.voice
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,7 +18,7 @@ class EnergyEndOfSpeechTest {
 
     /** Feeds [millis] of frames at [level]; true if any frame ended the turn. */
     private fun EnergyEndOfSpeech.feed(millis: Int, level: Int): Boolean =
-        (0 until millis / 20).map { onFrame(frame(level)) }.any { it }
+        (0 until millis / 20).map { onFrame(frame(level)) }.any { it != Endpoint.Continue }
 
     @Test
     fun `ends after a second of quiet following speech`() {
@@ -25,9 +26,9 @@ class EnergyEndOfSpeechTest {
         assertFalse(eos.feed(200, level = 50))
         assertFalse(eos.feed(1_500, level = 3_000))
         assertFalse(eos.feed(980, level = 50))
-        assertTrue(eos.onFrame(frame(50)))
+        assertEquals(Endpoint.End, eos.onFrame(frame(50)))
         // Stays ended.
-        assertTrue(eos.onFrame(frame(3_000)))
+        assertEquals(Endpoint.End, eos.onFrame(frame(3_000)))
     }
 
     @Test
@@ -43,7 +44,7 @@ class EnergyEndOfSpeechTest {
     fun `gives up when nobody speaks`() {
         val eos = EnergyEndOfSpeech()
         assertFalse(eos.feed(4_980, level = 50))
-        assertTrue(eos.onFrame(frame(50)))
+        assertEquals(Endpoint.NoSpeech, eos.onFrame(frame(50)))
     }
 
     @Test
@@ -79,7 +80,7 @@ class EnergyEndOfSpeechTest {
         assertFalse(eos.feed(200, level = 50))
         assertFalse(eos.feed(800, level = 3_000))
         assertFalse(eos.feed(980, level = 50))
-        assertTrue(eos.onFrame(frame(50)))
+        assertEquals(Endpoint.End, eos.onFrame(frame(50)))
     }
 
     @Test
@@ -92,7 +93,7 @@ class EnergyEndOfSpeechTest {
         // Then he speaks, and the turn ends a second after he stops.
         assertFalse(eos.feed(1_200, level = 2_500))
         assertFalse(eos.feed(980, level = 60))
-        assertTrue(eos.onFrame(frame(60)))
+        assertEquals(Endpoint.End, eos.onFrame(frame(60)))
     }
 
     @Test
@@ -104,6 +105,6 @@ class EnergyEndOfSpeechTest {
         assertFalse(eos.feed(2_000, level = 60))
         assertFalse(eos.feed(600, level = 3_000))
         assertFalse(eos.feed(980, level = 60))
-        assertTrue(eos.onFrame(frame(60)))
+        assertEquals(Endpoint.End, eos.onFrame(frame(60)))
     }
 }

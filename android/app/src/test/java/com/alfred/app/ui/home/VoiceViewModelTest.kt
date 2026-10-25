@@ -3,6 +3,13 @@ package com.alfred.app.ui.home
 import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.settings.AppSettings
 import com.alfred.app.data.voice.ClientMessage
+import com.alfred.app.data.voice.EndOfSpeechDetector
+import com.alfred.app.data.voice.goQuiet
+import com.alfred.app.data.voice.vad.EndpointReport
+import com.alfred.app.data.voice.vad.SileroEndOfSpeech
+import com.alfred.app.data.voice.vad.VadConfig
+import com.alfred.app.data.voice.vad.VadStream
+import com.alfred.app.testing.LoudnessVadModel
 import com.alfred.app.data.voice.FRAME_BYTES
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.ServerMessage
@@ -32,7 +39,9 @@ class VoiceViewModelTest {
     private val player = FakeAudioPlayer()
     private val capture = FakeAudioCapture()
 
-    private fun TestScope.viewModel(): Pair<VoiceViewModel, VoiceController> {
+    private fun TestScope.viewModel(
+        endOfSpeech: (() -> Boolean) -> EndOfSpeechDetector = ::goQuiet,
+    ): Pair<VoiceViewModel, VoiceController> {
         val controller = VoiceController(
             connection = connection,
             capture = capture,
@@ -43,7 +52,7 @@ class VoiceViewModelTest {
             scope = backgroundScope,
             ioDispatcher = mainDispatcher.dispatcher,
         )
-        return VoiceViewModel(controller, connection) to controller
+        return VoiceViewModel(controller, connection, endOfSpeech) to controller
     }
 
     private val phaseOf: (VoiceController) -> VoicePhase = { it.state.value.phase }
@@ -75,6 +84,27 @@ class VoiceViewModelTest {
 
         assertEquals(VoicePhase.Thinking, phaseOf(voice))
         assertTrue(connection.sent.last() is ClientMessage.TurnEnd)
+    }
+
+    @Test
+    fun `a pause while the button is held logs no end`() = runTest(mainDispatcher.dispatcher) {
+        val reports = mutableListOf<EndpointReport>()
+        val (vm, voice) = viewModel { held ->
+            SileroEndOfSpeech(VadStream(LoudnessVadModel()), VadConfig(), reports::add, held = held)
+        }
+
+        vm.onTalkPressed()
+        repeat(50) { capture.frames.trySend(square(8_000)) }
+        // A 1.5 s pause to think, button still down: not the end, and nothing logged as one.
+        repeat(75) { capture.frames.trySend(square(30)) }
+        repeat(25) { capture.frames.trySend(square(8_000)) }
+        assertEquals(VoicePhase.Listening, phaseOf(voice))
+        assertTrue(reports.isEmpty())
+
+        // The release sends it.
+        vm.onTalkReleased(heldMillis = 3_000)
+        assertEquals(VoicePhase.Thinking, phaseOf(voice))
+        assertTrue(reports.isEmpty())
     }
 
     @Test

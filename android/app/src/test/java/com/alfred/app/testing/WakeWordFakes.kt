@@ -88,9 +88,15 @@ class FakeWakeFeedback(private val micOpen: () -> Boolean = { false }) : WakeFee
     val wakes = mutableListOf<Boolean>()
     val micOpenAtWake = mutableListOf<Boolean>()
 
+    val noSpeech = mutableListOf<Boolean>()
+
     override suspend fun onWake(chime: Boolean) {
         wakes += chime
         micOpenAtWake += micOpen()
+    }
+
+    override suspend fun onNoSpeech(chime: Boolean) {
+        noSpeech += chime
     }
 }
 

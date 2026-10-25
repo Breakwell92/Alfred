@@ -1,5 +1,7 @@
 package com.alfred.app.ui.settings
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +17,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -41,6 +47,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
         onPairingCodeChange = viewModel::onPairingCodeChange,
         onPair = viewModel::pair,
         wakeWord = { WakeWordSection() },
+        developer = { DeveloperSection() },
     )
 }
 
@@ -55,7 +62,10 @@ fun SettingsContent(
     onPairingCodeChange: (String) -> Unit,
     onPair: () -> Unit,
     wakeWord: @Composable () -> Unit = {},
+    developer: @Composable () -> Unit = {},
 ) {
+    // Tapping the title DEVELOPER_TAPS times shows the developer section, like Android's build number.
+    var titleTaps by rememberSaveable { mutableIntStateOf(0) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -63,7 +73,14 @@ fun SettingsContent(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Settings", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Settings",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { titleTaps++ },
+        )
         OutlinedTextField(
             value = state.serverUrl,
             onValueChange = onServerUrlChange,
@@ -149,8 +166,15 @@ fun SettingsContent(
 
         HorizontalDivider()
         wakeWord()
+
+        if (titleTaps >= DEVELOPER_TAPS) {
+            HorizontalDivider()
+            developer()
+        }
     }
 }
+
+private const val DEVELOPER_TAPS = 7
 
 @Preview
 @Composable

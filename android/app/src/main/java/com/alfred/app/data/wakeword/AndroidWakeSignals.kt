@@ -107,6 +107,18 @@ class AndroidWakeFeedback(private val context: Context) : WakeFeedback {
         }
     }
 
+    override suspend fun onNoSpeech(chime: Boolean) {
+        if (!chime) return
+        val tone = runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, SOFT_CHIME_VOLUME) }.getOrNull()
+            ?: return
+        try {
+            tone.startTone(ToneGenerator.TONE_PROP_NACK, SOFT_CHIME_MILLIS)
+            delay(SOFT_CHIME_MILLIS + 50L)
+        } finally {
+            tone.release()
+        }
+    }
+
     private fun vibrator(): Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         context.getSystemService(VibratorManager::class.java)?.defaultVibrator
     } else {
@@ -116,5 +128,9 @@ class AndroidWakeFeedback(private val context: Context) : WakeFeedback {
     private companion object {
         const val CHIME_VOLUME = 80
         const val CHIME_MILLIS = 150
+
+        /** "Nobody spoke": quieter than the wake chime, so it doesn't sound like an error. */
+        const val SOFT_CHIME_VOLUME = 40
+        const val SOFT_CHIME_MILLIS = 200
     }
 }

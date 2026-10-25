@@ -73,6 +73,9 @@ interface WakeSignals {
 /** What the user notices on a wake: a chime (if on) and a light buzz. Returns once the chime is done. */
 fun interface WakeFeedback {
     suspend fun onWake(chime: Boolean)
+
+    /** The turn after a wake was cancelled because nobody spoke: a softer sound (if on). */
+    suspend fun onNoSpeech(chime: Boolean) {}
 }
 
 /** A wake that just happened, while "That wasn't me" can still report it. */
@@ -225,7 +228,8 @@ class WakeWordController(
             }
             onWake(settings.model, detection)
             feedback.onWake(settings.chime)
-            if (voice.startListening(endOfSpeech())) {
+            val noSpeech = { scope.launch { feedback.onNoSpeech(settings.chime) }; Unit }
+            if (voice.startListening(endOfSpeech(), onNoSpeech = noSpeech)) {
                 // The voice phase leaves Idle, so the mode changes and this is cancelled.
                 awaitCancellation()
             }

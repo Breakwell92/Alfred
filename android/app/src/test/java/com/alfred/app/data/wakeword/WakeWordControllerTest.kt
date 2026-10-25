@@ -4,6 +4,7 @@ import com.alfred.app.data.device.ApprovalSigner
 import com.alfred.app.data.settings.AppSettings
 import com.alfred.app.data.voice.ClientMessage
 import com.alfred.app.data.voice.EndOfSpeechDetector
+import com.alfred.app.data.voice.Endpoint
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.VoiceController
 import com.alfred.app.data.voice.VoicePhase
@@ -42,7 +43,7 @@ class WakeWordControllerTest {
     private val events = FakeWakeEventLog()
     private val models = FakeWakeWordModels(defaultScore = 0.9f)
     private val loaded = mutableListOf<StockWakeWord>()
-    private var endOfSpeech: EndOfSpeechDetector = EndOfSpeechDetector { false }
+    private var endOfSpeech: EndOfSpeechDetector = EndOfSpeechDetector { Endpoint.Continue }
 
     private lateinit var voice: VoiceController
 
@@ -113,10 +114,29 @@ class WakeWordControllerTest {
     }
 
     @Test
+    fun `nobody speaking cancels the turn quietly with the soft chime`() = runWakeTest {
+        val wake = controller()
+        var frames = 0
+        endOfSpeech = EndOfSpeechDetector { if (++frames >= 2) Endpoint.NoSpeech else Endpoint.Continue }
+        wake.start()
+        sayWakeWord()
+
+        capture.frames.trySend(ByteArray(640))
+        capture.frames.trySend(ByteArray(640))
+        assertEquals(VoicePhase.Idle, voice.state.value.phase)
+        assertEquals(null, voice.state.value.error)
+        assertTrue(connection.sent.any { it is ClientMessage.TurnCancel })
+        assertFalse(connection.sent.any { it is ClientMessage.TurnEnd })
+        assertEquals(listOf(true), feedback.noSpeech)
+        // And it's listening for the wake word again.
+        assertEquals(WakeState.Listening(StockWakeWord.HeyJarvis), wake.state.value)
+    }
+
+    @Test
     fun `the end-of-speech detector ends the turn`() = runWakeTest {
         val wake = controller()
         var frames = 0
-        endOfSpeech = EndOfSpeechDetector { ++frames >= 2 }
+        endOfSpeech = EndOfSpeechDetector { if (++frames >= 2) Endpoint.End else Endpoint.Continue }
         wake.start()
         sayWakeWord()
 

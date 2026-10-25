@@ -31,6 +31,10 @@ class ToolMeta(BaseModel):
     description: str
     risk: Risk
     privacy: Privacy = "cloud_ok"
+    # What a confirmation prompt says the call will do, formatted with the call's arguments,
+    # e.g. "Send an email to {to}: '{subject}'". Unset (or a missing argument) falls back to
+    # the tool name and its arguments. See docs/decisions/0013-confirmation-gating.md.
+    confirm_summary: str | None = None
 
 
 @dataclass(frozen=True)

@@ -88,7 +88,7 @@ def test_echo_agent_uses_local_main_and_get_time() -> None:
 
     assert agent.model is not None and agent.model.id == "local-main"
     assert isinstance(agent.tools, list)
-    assert [getattr(t, "__name__", None) for t in agent.tools] == ["get_time"]
+    assert [getattr(t, "__name__", None) for t in agent.tools] == ["get_time", "send_test_message"]
 
 
 def test_get_time_reports_local_time() -> None:

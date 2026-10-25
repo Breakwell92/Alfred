@@ -33,7 +33,7 @@ from tests.llm_fakes import (
     streamed_tool_call,
     tool_call_completion,
 )
-from tests.router_fakes import FakeBudget, deny
+from tests.router_fakes import FakeBudget, FakeGate, deny, read_only_connector
 
 CLOUD: list[ModelAlias] = ["cloud-claude", "cloud-gpt", "cloud-gemini"]
 
@@ -50,7 +50,9 @@ class Harness:
         self.budget = budget or FakeBudget()
         self.db = AsyncSqliteDb(db_file=str(tmp_path / "agno.db"))
         self.metadata: list[CallMetadata] = []
-        self.router = Router(get_registry(), self.budget, self.model, self.db)
+        # The tools these tests give their agents are declared `read`, so they aren't gated.
+        self.gate = FakeGate(read_only_connector("broken", "switch_on"))
+        self.router = Router(get_registry(), self.budget, self.model, self.db, self.gate)
 
     def model(self, alias: ModelAlias, metadata: CallMetadata, **kwargs: Any) -> Model:
         self.metadata.append(metadata)

@@ -7,6 +7,11 @@ with each text delta, then one `done` event with the whole reply and a `turn` su
 it ran (specialist, model, why, tools, cost), or an `error` event. The web chat page
 (`alfred_server/ui`, docs/decisions/0011-text-chat-ui.md) shows that summary per turn.
 See docs/decisions/0007-agent-runtime.md.
+
+A turn that reaches a gated tool pauses: the reply asks for the OK and carries the pending
+`confirmation`. While one is pending, a plain "yes" or "no" as the session's next message
+answers it; anything else cancels a pending `write` confirmation and is routed as usual
+(docs/decisions/0013-confirmation-gating.md).
 """
 
 import asyncio
@@ -14,6 +19,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Annotated, Any, Protocol
 
 from agno.db.base import AsyncBaseDb
@@ -31,6 +37,7 @@ from alfred_server.agents.router import (
     Failed,
     ModelFactory,
     Route,
+    RoutedReply,
     Router,
     Token,
 )
@@ -38,6 +45,16 @@ from alfred_server.agents.storage import StorageUnavailableError, check_agent_db
 from alfred_server.budget.models import CostEstimate
 from alfred_server.budget.service import get_budget_service
 from alfred_server.config import Settings, get_settings
+from alfred_server.confirmations.models import CHANNEL_FOR_DEVICE, PendingConfirmation, can_approve
+from alfred_server.confirmations.service import (
+    APP_ONLY_REPLY,
+    ConfirmationService,
+    ConfirmationsUnavailableError,
+    cancel_paused_run,
+    denied_reply,
+    get_confirmation_service,
+    parse_yes_no,
+)
 from alfred_server.models.gateway import (
     CallMetadata,
     GatewayNotConfiguredError,
@@ -62,6 +79,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
+    # Set when the reply asks for the OK to run a gated tool (see `PendingConfirmation.public`).
+    confirmation: dict[str, Any] | None = None
 
 
 def agent_db_dependency(settings: Annotated[Settings, Depends(get_settings)]) -> AsyncBaseDb:
@@ -110,28 +129,116 @@ def budget_dependency() -> ChatBudget:
     return get_budget_service()
 
 
+def confirmation_service_dependency() -> ConfirmationService:
+    """Pending confirmations and permission overrides. Overridden in tests."""
+    return get_confirmation_service()
+
+
 def router_dependency(
     db: Annotated[AsyncBaseDb, Depends(ready_agent_db)],
     model_factory: Annotated[ModelFactory, Depends(model_factory_dependency)],
     budget: Annotated[ChatBudget, Depends(budget_dependency)],
+    confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
 ) -> Router:
-    return Router(get_registry(), budget, model_factory, db)
+    return Router(get_registry(), budget, model_factory, db, confirmations)
 
 
-async def _route(
-    body: ChatRequest, settings: Settings, router: Router
-) -> tuple[Route, RequestContext]:
-    ctx = RequestContext.build(
+@dataclass(frozen=True)
+class Answered:
+    """The message answered a pending confirmation instead of starting a new request."""
+
+    reply: str
+    # The resumed run, if the answer was yes and it ran.
+    routed: RoutedReply | None = None
+    # Still (or newly) pending: an app-only approval, or a run that paused again.
+    confirmation: PendingConfirmation | None = None
+
+
+async def answer_pending(
+    text: str,
+    ctx: RequestContext,
+    confirmations: ConfirmationService,
+    agent_router: Router,
+) -> Answered | None:
+    """Answer this session's pending confirmation with `text`, or None to route it as usual.
+
+    Raises `ConfirmationsUnavailableError` if the confirmations can't be read and
+    `AgentRunError` if an approved run fails to continue.
+    """
+    db = agent_router.db
+    await confirmations.expire_due(db)
+    pending = await asyncio.to_thread(confirmations.pending, ctx.session_id)
+    if not pending:
+        return None
+    answer = parse_yes_no(text)
+    if answer is None:
+        # The user moved on: a later "yes" mustn't approve something they've stopped
+        # thinking about. Irreversible ones wait for the app (or expiry).
+        for c in pending:
+            if c.tier != "irreversible" and await asyncio.to_thread(
+                confirmations.resolve, c, "cancelled"
+            ):
+                await cancel_paused_run(db, c, "Cancelled: the user moved on.")
+        return None
+    c = pending[-1]  # the newest: what the last reply asked about
+    if answer == "no":
+        if await asyncio.to_thread(confirmations.resolve, c, "denied"):
+            await cancel_paused_run(db, c, denied_reply(c))
+        return Answered(denied_reply(c))
+    if not can_approve(c.tier, CHANNEL_FOR_DEVICE[ctx.device_type]):
+        return Answered(APP_ONLY_REPLY, confirmation=c)
+    if not await asyncio.to_thread(confirmations.resolve, c, "approved"):
+        return Answered("That's already been dealt with.")
+    routed = await agent_router.resume(c, ctx)
+    return Answered(routed.reply, routed, routed.confirmation)
+
+
+def _context(body: ChatRequest, settings: Settings) -> RequestContext:
+    return RequestContext.build(
         timezone=settings.timezone,
         device_type=body.device_type,
         session_id=body.session_id or str(uuid.uuid4()),
         device_id=body.device_id,
     )
+
+
+def _unavailable(exc: ConfirmationsUnavailableError) -> HTTPException:
+    logger.error("chat refused: %s", exc)
+    return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+
+async def _route(body: ChatRequest, ctx: RequestContext, router: Router) -> Route:
     try:
-        route = await router.route(body.text, ctx)
+        return await router.route(body.text, ctx)
     except GatewayNotConfiguredError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    return route, ctx
+
+
+async def _answer(
+    body: ChatRequest,
+    ctx: RequestContext,
+    confirmations: ConfirmationService,
+    agent_router: Router,
+) -> Answered | None:
+    try:
+        return await answer_pending(body.text, ctx, confirmations, agent_router)
+    except ConfirmationsUnavailableError as exc:
+        raise _unavailable(exc) from exc
+    except GatewayNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except AgentRunError as exc:
+        logger.error("resuming a run failed (session %s): %s", ctx.session_id, exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The agent run failed") from exc
+    except Exception as exc:
+        # e.g. Postgres down while reading the pending confirmations.
+        logger.exception("couldn't check pending confirmations (session %s)", ctx.session_id)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Confirmations are unavailable"
+        ) from exc
+
+
+def _public(c: PendingConfirmation | None) -> dict[str, Any] | None:
+    return None if c is None else c.public()
 
 
 @router.post("/chat")
@@ -139,19 +246,34 @@ async def chat(
     body: ChatRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     agent_router: Annotated[Router, Depends(router_dependency)],
+    confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
 ) -> ChatResponse:
-    route, ctx = await _route(body, settings, agent_router)
+    ctx = _context(body, settings)
+    answered = await _answer(body, ctx, confirmations, agent_router)
+    if answered is not None:
+        return ChatResponse(
+            reply=answered.reply,
+            session_id=ctx.session_id,
+            confirmation=_public(answered.confirmation),
+        )
+    route = await _route(body, ctx, agent_router)
     # Agno reports model failures as an errored run (AgentRunError); the bare except is a
     # backstop for anything it lets escape. Storage was checked by `ready_agent_db`.
     try:
         result = await agent_router.run(route, body.text, ctx)
+    except ConfirmationsUnavailableError as exc:
+        raise _unavailable(exc) from exc
     except AgentRunError as exc:
         logger.error("chat run failed (session %s): %s", ctx.session_id, exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The agent run failed") from exc
     except Exception as exc:
         logger.exception("chat run failed (session %s)", ctx.session_id)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The agent run failed") from exc
-    return ChatResponse(reply=result.reply, session_id=ctx.session_id)
+    return ChatResponse(
+        reply=result.reply,
+        session_id=ctx.session_id,
+        confirmation=_public(result.confirmation),
+    )
 
 
 @router.post("/chat/stream")
@@ -160,12 +282,41 @@ async def chat_stream(
     settings: Annotated[Settings, Depends(get_settings)],
     agent_router: Annotated[Router, Depends(router_dependency)],
     budget: Annotated[ChatBudget, Depends(budget_dependency)],
+    confirmations: Annotated[ConfirmationService, Depends(confirmation_service_dependency)],
 ) -> StreamingResponse:
-    route, ctx = await _route(body, settings, agent_router)
+    ctx = _context(body, settings)
+    answered = await _answer(body, ctx, confirmations, agent_router)
+    if answered is not None:
+        events = _answered_events(answered, budget, ctx)
+    else:
+        route = await _route(body, ctx, agent_router)
+        events = _sse_events(agent_router, budget, route, body.text, ctx)
     return StreamingResponse(
-        _sse_events(agent_router, budget, route, body.text, ctx),
+        events,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _answered_events(
+    answered: Answered, budget: ChatBudget, ctx: RequestContext
+) -> AsyncIterator[str]:
+    """An answered confirmation as a stream: the whole reply as one token, then `done`."""
+    yield _sse("token", {"text": answered.reply})
+    turn = None
+    if answered.routed is not None:
+        run = answered.routed.run
+        tools = tuple(t.tool_name for t in run.tools or [] if t.tool_name)
+        done = Done(answered.reply, answered.routed.route, tools, run.metrics)
+        turn = await _turn_info(done, budget)
+    yield _sse(
+        "done",
+        {
+            "reply": answered.reply,
+            "session_id": ctx.session_id,
+            "turn": turn,
+            "confirmation": _public(answered.confirmation),
+        },
     )
 
 
@@ -180,7 +331,15 @@ async def _sse_events(
                 yield _sse("token", {"text": item.text})
             elif isinstance(item, Done):
                 turn = await _turn_info(item, budget)
-                yield _sse("done", {"reply": item.reply, "session_id": session_id, "turn": turn})
+                yield _sse(
+                    "done",
+                    {
+                        "reply": item.reply,
+                        "session_id": session_id,
+                        "turn": turn,
+                        "confirmation": _public(item.confirmation),
+                    },
+                )
             elif isinstance(item, Failed):
                 yield failed
     except Exception:

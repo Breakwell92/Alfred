@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     # How often the background task renews OAuth tokens that expire within 5 minutes.
     connector_refresh_interval_s: float = Field(default=60.0, gt=0)
 
+    # Confirmation gating (alfred_server.confirmations, docs/decisions/0013-confirmation-gating.md).
+    # A paused run is cancelled if nobody answers within this long.
+    confirmation_ttl_s: float = Field(default=120.0, gt=0)
+    # The same for unattended (scheduled) runs, which wait for Dan to see a notification.
+    confirmation_scheduled_ttl_s: float = Field(default=3600.0, gt=0)
+    # How often the background task cancels expired confirmations.
+    confirmation_sweep_interval_s: float = Field(default=15.0, gt=0)
+
     # Speech-to-text (faster-whisper). See docs/decisions/0002-stt.md for the model choice.
     # Off by default so tests and CI never load a model; the voice gateway enables it.
     stt_enabled: bool = False

@@ -300,8 +300,9 @@ async function resolveConfirmation(id, approve, row) {
     let message = approve ? "Approved." : "Denied.";
     try {
       const body = await response.json();
-      if (body && typeof body.message === "string") message = body.message;
-      else if (body && typeof body.reply === "string") message = body.reply;
+      // Alfred's reply (the resumed run's answer, or "OK, I won't …"), else the status.
+      if (body && typeof body.reply === "string") message = body.reply;
+      else if (body && typeof body.message === "string") message = body.message;
     } catch (_) {
       // no body
     }

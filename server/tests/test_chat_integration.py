@@ -25,7 +25,15 @@ from alfred_server.budget.prices import GatewayPrices
 from alfred_server.budget.service import BudgetService
 from alfred_server.budget.spend import SpendRow
 from alfred_server.budget.store import BudgetStore
-from alfred_server.chat import agent_db_dependency, budget_dependency
+from alfred_server.chat import (
+    agent_db_dependency,
+    budget_dependency,
+    confirmation_service_dependency,
+)
+from alfred_server.confirmations.service import ConfirmationService
+from alfred_server.confirmations.store import ConfirmationStore
+from alfred_server.connectors.builtin.test_messages import SENT_TEST_MESSAGES
+from alfred_server.connectors.registry import default_registry
 from alfred_server.main import create_app
 from tests.budget_helpers import memory_engine
 
@@ -71,19 +79,27 @@ class Client:
             timezone="Europe/London",
         )
         self.db = InMemoryDb()
+        self.confirmations = ConfirmationService(
+            ConfirmationStore(memory_engine()), default_registry()
+        )
         app = create_app()
         app.dependency_overrides[agent_db_dependency] = lambda: self.db
         app.dependency_overrides[budget_dependency] = lambda: budget
+        app.dependency_overrides[confirmation_service_dependency] = lambda: self.confirmations
         self.client = TestClient(app)
 
-    def chat(self, text: str, session_id: str) -> str:
+    def chat_json(self, text: str, session_id: str) -> dict[str, Any]:
         response = self.client.post(
             "/chat",
             json={"text": text, "session_id": session_id},
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         assert response.status_code == 200, response.text
-        reply: str = response.json()["reply"]
+        body: dict[str, Any] = response.json()
+        return body
+
+    def chat(self, text: str, session_id: str) -> str:
+        reply: str = self.chat_json(text, session_id)["reply"]
         return reply
 
     def runs(self, session_id: str) -> list[Any]:
@@ -117,3 +133,24 @@ def test_ask_claude_uses_cloud_claude(monkeypatch: pytest.MonkeyPatch) -> None:
     assert routing["alias"] == "cloud-claude"
     assert routing["reason"] == "explicit_request"
     assert run.model == "cloud-claude"
+
+
+def test_send_test_message_waits_for_yes(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client(monkeypatch)
+    SENT_TEST_MESSAGES.clear()
+
+    body = client.chat_json(
+        "Send a test message to Sam saying I'm running 10 minutes late.", "integration-3"
+    )
+
+    assert body["confirmation"] is not None, body["reply"]
+    assert body["confirmation"]["tools"] == ["send_test_message"]
+    assert body["reply"].startswith("I need your OK first: Send a test message to Sam")
+    assert SENT_TEST_MESSAGES == []
+
+    client.chat("Yes", "integration-3")
+
+    [(recipient, text)] = SENT_TEST_MESSAGES
+    assert recipient == "Sam"
+    assert "late" in text
+    SENT_TEST_MESSAGES.clear()

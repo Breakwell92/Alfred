@@ -12,6 +12,7 @@ from alfred_server.auth import require_api_token
 from alfred_server.budget.api import router as budget_router
 from alfred_server.chat import router as chat_router
 from alfred_server.config import Settings, get_settings
+from alfred_server.confirmations.api import router as confirmations_router
 from alfred_server.connectors.api import callback_router as connector_callback_router
 from alfred_server.connectors.api import router as connector_router
 from alfred_server.connectors.refresher import TokenRefresher
@@ -48,7 +49,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             get_connector_service(), get_settings().connector_refresh_interval_s
         )
         refresher.start()
+    # Cancels paused runs whose confirmation nobody answered in time.
+    from alfred_server.agents.storage import get_agent_db
+    from alfred_server.confirmations.service import get_confirmation_service
+    from alfred_server.confirmations.sweeper import ConfirmationSweeper
+
+    sweeper = ConfirmationSweeper(
+        get_confirmation_service(), get_agent_db(), get_settings().confirmation_sweep_interval_s
+    )
+    sweeper.start()
     yield
+    await sweeper.stop()
     if refresher is not None:
         await refresher.stop()
     if get_connector_service.cache_info().currsize:
@@ -108,6 +119,10 @@ def create_app() -> FastAPI:
     protected.include_router(budget_router)
 
     protected.include_router(chat_router)
+
+    # GET /confirmations/pending, POST /confirmations/{id}, GET /settings/permissions,
+    # PUT /settings/permissions/{connector}/{tool}.
+    protected.include_router(confirmations_router)
 
     # GET /connectors, PUT /connectors/{id}, DELETE /connectors/{id}/auth, GET .../auth/start.
     protected.include_router(connector_router)

@@ -36,6 +36,8 @@ data class AlfredColors(
     val onAccent: Color,
     /** The REC dot and errors. */
     val record: Color,
+    /** Something in progress that isn't an error yet, e.g. "RECONNECTING…". */
+    val warning: Color,
 )
 
 val AlfredDarkColors = AlfredColors(
@@ -54,6 +56,7 @@ val AlfredDarkColors = AlfredColors(
     accentGlow = Color(0xFFE9F8FF),
     onAccent = Color(0xFF07080A),
     record = Color(0xFFC0463E),
+    warning = Color(0xFFE0A03C),
 )
 
 /** Material 3 colours from Alfred's, so stock Material components fit in without overrides. */

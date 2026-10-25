@@ -6,6 +6,7 @@ import com.alfred.app.data.device.DeviceKeys
 import com.alfred.app.data.server.PairingResult
 import com.alfred.app.data.server.ServerClient
 import com.alfred.app.data.settings.AppSettings
+import com.alfred.app.data.settings.ProfileSettingsRepository
 import com.alfred.app.data.settings.SettingsRepository
 import com.alfred.app.data.settings.isValidApiToken
 import kotlinx.coroutines.CancellationException
@@ -31,12 +32,16 @@ data class SettingsUiState(
     val pairingCode: String = "",
     val pairing: Boolean = false,
     val pairingError: String? = null,
+    /** Home's greeting name and status-line place; blank shows the default. */
+    val name: String = "",
+    val location: String = "",
 )
 
 class SettingsViewModel(
     private val repository: SettingsRepository,
     private val serverClient: ServerClient,
     private val deviceKeys: DeviceKeys,
+    private val profileRepository: ProfileSettingsRepository,
     /** Keystore calls block; tests run them on the test dispatcher. */
     private val keyDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
@@ -47,11 +52,14 @@ class SettingsViewModel(
     init {
         viewModelScope.launch {
             val current = repository.settings.first()
+            val profile = profileRepository.settings.first()
             _state.update {
                 it.copy(
                     serverUrl = current.serverUrl,
                     apiToken = current.apiToken,
                     pairedDeviceName = current.pairedDeviceName,
+                    name = profile.name.orEmpty(),
+                    location = profile.location.orEmpty(),
                     loaded = true,
                 )
             }
@@ -62,6 +70,10 @@ class SettingsViewModel(
 
     fun onApiTokenChange(value: String) =
         _state.update { it.copy(apiToken = value, saved = false, tokenError = null) }
+
+    fun onNameChange(value: String) = _state.update { it.copy(name = value, saved = false) }
+
+    fun onLocationChange(value: String) = _state.update { it.copy(location = value, saved = false) }
 
     fun onPairingCodeChange(value: String) =
         _state.update { it.copy(pairingCode = value, pairingError = null) }
@@ -81,10 +93,15 @@ class SettingsViewModel(
         }
         viewModelScope.launch {
             repository.save(settings)
+            val name = current.name.trim()
+            val location = current.location.trim()
+            profileRepository.update { it.copy(name = name.ifEmpty { null }, location = location.ifEmpty { null }) }
             _state.update {
                 it.copy(
                     serverUrl = settings.serverUrl,
                     apiToken = settings.apiToken,
+                    name = name,
+                    location = location,
                     saved = true,
                     tokenError = null,
                 )

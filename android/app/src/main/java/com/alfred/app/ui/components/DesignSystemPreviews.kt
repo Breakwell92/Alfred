@@ -129,13 +129,14 @@ private fun StatTilePreview() = Swatch {
     }
 }
 
-@Preview(name = "Octagon action buttons", widthDp = 360)
+@Preview(name = "Octagon action buttons", widthDp = 480)
 @Composable
 private fun OctagonActionButtonPreview() = Swatch {
     Row(horizontalArrangement = Arrangement.spacedBy(AlfredTheme.spacing.xl)) {
         OctagonActionButton(Icons.Filled.Mic, "Talk", onClick = {})
         OctagonActionButton(Icons.Filled.Stop, "Send", onClick = {}, outlined = true)
         OctagonActionButton(Icons.Filled.Mic, "Disabled", onClick = {}, enabled = false)
+        OctagonActionButton(Icons.Filled.Mic, "Hold to talk", onClick = {}, onPress = { tryAwaitRelease() })
     }
 }
 

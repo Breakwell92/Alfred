@@ -25,7 +25,7 @@ data class VoiceUiState(val voice: VoiceState = VoiceState(), val link: LinkStat
  */
 class VoiceViewModel(
     private val voice: VoiceController,
-    connection: DeviceConnection,
+    private val connection: DeviceConnection,
     private val endOfSpeech: () -> EndOfSpeechDetector = ::goQuiet,
 ) : ViewModel() {
 
@@ -66,6 +66,9 @@ class VoiceViewModel(
         pressStartedTurn = false
         held = false
     }
+
+    /** The mic was tapped while the link is down: try again now rather than at the next backoff. */
+    fun reconnect() = connection.reconnectNow()
 
     fun answer(approve: Boolean) = voice.answer(approve)
 

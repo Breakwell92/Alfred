@@ -16,12 +16,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alfred.app.R
 import com.alfred.app.ui.components.GridBackground
 import com.alfred.app.ui.theme.AlfredTheme
 import org.koin.compose.viewmodel.koinViewModel
@@ -33,6 +35,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = koinViewModel()) {
         state = state,
         onServerUrlChange = viewModel::onServerUrlChange,
         onApiTokenChange = viewModel::onApiTokenChange,
+        onNameChange = viewModel::onNameChange,
+        onLocationChange = viewModel::onLocationChange,
         onSave = viewModel::save,
         onPairingCodeChange = viewModel::onPairingCodeChange,
         onPair = viewModel::pair,
@@ -45,6 +49,8 @@ fun SettingsContent(
     state: SettingsUiState,
     onServerUrlChange: (String) -> Unit,
     onApiTokenChange: (String) -> Unit,
+    onNameChange: (String) -> Unit,
+    onLocationChange: (String) -> Unit,
     onSave: () -> Unit,
     onPairingCodeChange: (String) -> Unit,
     onPair: () -> Unit,
@@ -80,6 +86,29 @@ fun SettingsContent(
             enabled = state.loaded,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text("Home screen", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+            value = state.name,
+            onValueChange = onNameChange,
+            label = { Text("Your name") },
+            supportingText = { Text("\"Good evening, …\". Leave empty for ${stringResource(R.string.default_name)}") },
+            singleLine = true,
+            enabled = state.loaded,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = state.location,
+            onValueChange = onLocationChange,
+            label = { Text("Place") },
+            supportingText = {
+                Text("Shown before the time on Home. Leave empty for ${stringResource(R.string.default_location)}")
+            },
+            singleLine = true,
+            enabled = state.loaded,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
             modifier = Modifier.fillMaxWidth(),
         )
         Button(onClick = onSave, enabled = state.loaded) { Text("Save") }
@@ -132,6 +161,8 @@ private fun SettingsContentPreview() {
                 state = SettingsUiState(serverUrl = "http://glados:8000", apiToken = "x", loaded = true),
                 onServerUrlChange = {},
                 onApiTokenChange = {},
+                onNameChange = {},
+                onLocationChange = {},
                 onSave = {},
                 onPairingCodeChange = {},
                 onPair = {},

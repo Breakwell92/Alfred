@@ -78,7 +78,13 @@ fun StatTile(
             modifier = Modifier.padding(horizontal = AlfredTheme.spacing.l, vertical = 10.dp),
         ) {
             Text(label.uppercase(), style = AlfredTheme.typography.label, color = colors.textSecondary)
-            Text(value.uppercase(), style = AlfredTheme.typography.title, color = tint ?: valueColor)
+            Text(
+                value.uppercase(),
+                style = AlfredTheme.typography.title,
+                color = tint ?: valueColor,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
     val shape = ChamferShape(10.dp, corners)

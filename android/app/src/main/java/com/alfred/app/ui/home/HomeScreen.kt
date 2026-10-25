@@ -6,92 +6,115 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.HourglassTop
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alfred.app.R
 import com.alfred.app.data.server.ConnectionStatus
+import com.alfred.app.data.settings.ProfileSettings
 import com.alfred.app.data.voice.LinkState
 import com.alfred.app.data.voice.PendingConfirmation
 import com.alfred.app.data.voice.TurnMetadata
 import com.alfred.app.data.voice.VoicePhase
 import com.alfred.app.data.voice.VoiceState
+import com.alfred.app.ui.components.ChamferIconButton
 import com.alfred.app.ui.components.GridBackground
+import com.alfred.app.ui.components.OctagonActionButton
+import com.alfred.app.ui.components.StatTile
+import com.alfred.app.ui.orb.AlfredOrb
+import com.alfred.app.ui.orb.OrbSize
 import com.alfred.app.ui.theme.AlfredTheme
-import com.alfred.app.ui.theme.OctagonShape
+import com.alfred.app.ui.theme.Corner
+import java.time.LocalTime
 import java.util.Locale
+import kotlin.math.min
+import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
 
+/** Screen 1 of the design (STU-114, ADR 0022): Alfred waiting to be asked. */
 @Composable
 fun HomeScreen(
+    onOpenMenu: () -> Unit,
+    onOpenProtocol: () -> Unit,
     viewModel: HomeViewModel = koinViewModel(),
     voiceViewModel: VoiceViewModel = koinViewModel(),
 ) {
     val status by viewModel.status.collectAsStateWithLifecycle()
+    val profile by viewModel.profile.collectAsStateWithLifecycle()
     val voice by voiceViewModel.state.collectAsStateWithLifecycle()
+    val level = voiceViewModel.level.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var micDenied by rememberSaveable { mutableStateOf(false) }
     val askForMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         micDenied = !granted
     }
+    // Ticks on each minute boundary rather than every 60 s from whenever Home appeared.
+    val time by produceState(LocalTime.now()) {
+        while (true) {
+            val now = LocalTime.now()
+            value = now
+            delay((60 - now.second) * 1000L - now.nano / 1_000_000)
+        }
+    }
 
     HomeContent(
         status = status,
         voice = voice,
+        level = { level.value },
+        profile = profile,
+        time = time,
         micDenied = micDenied,
+        onOpenMenu = onOpenMenu,
+        onOpenProtocol = onOpenProtocol,
         onCheckNow = viewModel::refresh,
         onTalkPressed = {
             // Checked on every press, so a grant made in system settings is picked up.
@@ -105,6 +128,10 @@ fun HomeScreen(
             }
         },
         onTalkReleased = voiceViewModel::onTalkReleased,
+        onMicUnavailable = {
+            Toast.makeText(context, R.string.mic_not_connected, Toast.LENGTH_SHORT).show()
+            voiceViewModel.reconnect()
+        },
         onOpenAppSettings = { openAppSettings(context) },
         onAnswer = voiceViewModel::answer,
         onDismissConfirmation = voiceViewModel::dismissConfirmation,
@@ -123,46 +150,87 @@ private fun openAppSettings(context: Context) {
 }
 
 /**
- * [onTalkPressed] returns whether the press was taken (false while asking for the mic
- * permission); only then is [onTalkReleased] called with how long it was held.
+ * Stateless Home. [onTalkPressed] returns whether the press was taken (false while asking for
+ * the mic permission); only then is [onTalkReleased] called with how long it was held. [level]
+ * is read only by the orb. [time] drives both the clock and the greeting.
+ *
+ * Until the Transmitting screen (STU-116) exists, the greeting gives way to the exchange while
+ * Alfred thinks and speaks; the crosshair's sheet keeps the last turn and the connection detail.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeContent(
     status: ConnectionStatus,
     voice: VoiceUiState,
+    level: () -> Float,
+    profile: ProfileSettings,
+    time: LocalTime,
     micDenied: Boolean,
+    onOpenMenu: () -> Unit,
+    onOpenProtocol: () -> Unit,
     onCheckNow: () -> Unit,
     onTalkPressed: () -> Boolean,
     onTalkReleased: (heldMillis: Long) -> Unit,
+    onMicUnavailable: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onAnswer: (approve: Boolean) -> Unit,
     onDismissConfirmation: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val spacing = AlfredTheme.spacing
+    var showDetail by rememberSaveable { mutableStateOf(false) }
+    val phase = voice.voice.phase
+
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(horizontal = spacing.gutter)
+            .padding(top = spacing.m, bottom = spacing.xl),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        StatusCard(status = status, link = voice.link, onCheckNow = onCheckNow)
-        Conversation(
-            voice = voice.voice,
+        Header(onOpenMenu = onOpenMenu, onOpenDetail = { showDetail = true })
+        Spacer(Modifier.height(spacing.xl))
+        StatusRow(
+            line = statusLine(status, voice.link),
+            place = profile.location ?: stringResource(R.string.default_location),
+            time = time,
+        )
+        Orb(
+            phase = phase,
+            level = level,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
         )
-        if (micDenied) {
-            Text(
-                "Alfred needs the microphone to hear you.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
+        if (phase == VoicePhase.Thinking || phase == VoicePhase.Speaking) {
+            Exchange(voice.voice)
+        } else {
+            Greeting(
+                name = profile.name ?: stringResource(R.string.default_name),
+                hour = time.hour,
+                // While the confirmation sheet is up, errors about the answer show there instead.
+                error = voice.voice.error.takeIf { voice.voice.confirmation == null },
             )
-            OutlinedButton(onClick = onOpenAppSettings) { Text("Open app settings") }
         }
-        TalkButton(phase = voice.voice.phase, onPressed = onTalkPressed, onReleased = onTalkReleased)
-        Text(talkHint(voice.voice.phase), style = MaterialTheme.typography.bodyMedium)
+        if (micDenied) {
+            MicDenied(onOpenAppSettings)
+        }
+        Spacer(Modifier.weight(0.3f))
+        BottomRow(
+            persona = profile.personaName ?: stringResource(R.string.default_persona),
+            phase = phase,
+            micEnabled = micEnabled(phase, voice.link),
+            onOpenProtocol = onOpenProtocol,
+            onTalkPressed = onTalkPressed,
+            onTalkReleased = onTalkReleased,
+            onMicUnavailable = onMicUnavailable,
+        )
+    }
+
+    if (showDetail) {
+        ModalBottomSheet(onDismissRequest = { showDetail = false }) {
+            DetailSheet(status = status, voice = voice, onCheckNow = onCheckNow)
+        }
     }
 
     voice.voice.confirmation?.let { confirmation ->
@@ -177,92 +245,258 @@ fun HomeContent(
 }
 
 @Composable
-private fun StatusCard(status: ConnectionStatus, link: LinkState, onCheckNow: () -> Unit) {
-    val view = status.toView()
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(view.icon, contentDescription = null)
-                Spacer(Modifier.width(12.dp))
-                Text(view.title, style = MaterialTheme.typography.titleLarge)
-            }
-            view.detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-            Text("Voice: ${link.describe()}", style = MaterialTheme.typography.bodyMedium)
-            OutlinedButton(onClick = onCheckNow) { Text("Check now") }
+private fun Header(onOpenMenu: () -> Unit, onOpenDetail: () -> Unit) {
+    val colors = AlfredTheme.colors
+    val type = AlfredTheme.typography
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        ChamferIconButton(
+            icon = Icons.Filled.Menu,
+            contentDescription = "Menu",
+            onClick = onOpenMenu,
+            size = HEADER_BUTTON,
+            modifier = Modifier.align(Alignment.CenterStart),
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Letter spacing trails the last letter too; pad the start so the word sits centred.
+            Text(
+                "ALFRED",
+                style = type.wordmark,
+                color = colors.textPrimary,
+                modifier = Modifier.padding(start = 9.dp),
+            )
+            Text(
+                stringResource(R.string.home_subtitle).uppercase(),
+                style = type.label,
+                color = colors.accent,
+            )
         }
+        ChamferIconButton(
+            icon = Icons.Filled.GpsNotFixed,
+            contentDescription = "Status",
+            onClick = onOpenDetail,
+            size = HEADER_BUTTON,
+            modifier = Modifier.align(Alignment.CenterEnd),
+        )
     }
 }
 
 @Composable
-private fun Conversation(voice: VoiceState, modifier: Modifier = Modifier) {
-    var showDetails by rememberSaveable { mutableStateOf(false) }
+private fun StatusRow(line: StatusLine, place: String, time: LocalTime) {
+    val colors = AlfredTheme.colors
+    val type = AlfredTheme.typography
+    val (indicator, text) = when (line.tone) {
+        StatusTone.Secure -> colors.accent to colors.textSecondary
+        StatusTone.Pending -> colors.warning to colors.warning
+        StatusTone.Down -> colors.record to colors.record
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .background(indicator),
+        )
+        Text(
+            stringResource(line.label).uppercase(),
+            style = type.label,
+            color = text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 10.dp, end = AlfredTheme.spacing.s),
+        )
+        // Weighted, so it's measured after the connection state and gets only the room left:
+        // a long place set in Settings is ellipsised rather than squeezing the state.
+        Text(
+            place.uppercase(),
+            style = type.label,
+            color = colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            " ${formatClock(time)}",
+            style = type.label,
+            color = colors.textSecondary,
+            maxLines = 1,
+        )
+    }
+}
+
+/** The large orb, shrunk to fit when the screen is short (it never stretches). */
+@Composable
+private fun Orb(phase: VoicePhase, level: () -> Float, modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val scale = min(1f, min(maxWidth / ORB_SIDE, maxHeight / ORB_SIDE))
+        AlfredOrb(
+            state = orbStateFor(phase),
+            level = level(),
+            size = OrbSize.Large,
+            showGuides = true,
+            channelLabel = "CH-01",
+            modifier = Modifier
+                .requiredSize(ORB_SIDE)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                },
+        )
+    }
+}
+
+@Composable
+private fun Greeting(name: String, hour: Int, error: String?) {
+    val colors = AlfredTheme.colors
+    val type = AlfredTheme.typography
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            stringResource(greetingFor(hour), name).uppercase(),
+            style = type.label.copy(fontSize = type.label.fontSize * GREETING_SCALE),
+            color = colors.accent,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            stringResource(R.string.home_prompt).uppercase(),
+            style = type.displayL,
+            color = colors.textPrimary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = AlfredTheme.spacing.xs),
+        )
+        error?.let {
+            Text(
+                it,
+                style = type.bodySmall,
+                color = colors.record,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = AlfredTheme.spacing.s),
+            )
+        }
+    }
+}
+
+/** What was asked and what Alfred is saying, while he thinks and speaks. */
+@Composable
+private fun Exchange(voice: VoiceState) {
+    val colors = AlfredTheme.colors
+    val type = AlfredTheme.typography
     Column(
-        modifier = modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(AlfredTheme.spacing.s),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 200.dp)
+            .verticalScroll(rememberScrollState()),
     ) {
         if (voice.transcript.isNotEmpty()) {
-            Text("You", style = MaterialTheme.typography.labelMedium)
-            Text(voice.transcript, style = MaterialTheme.typography.bodyLarge)
+            Text(voice.transcript, style = type.bodySmall, color = colors.textSecondary, textAlign = TextAlign.Center)
         }
-        if (voice.reply.isNotEmpty()) {
-            Text("Alfred", style = MaterialTheme.typography.labelMedium)
-            Text(voice.reply, style = MaterialTheme.typography.bodyLarge)
-        }
-        voice.metadata?.let { metadata ->
-            TextButton(onClick = { showDetails = !showDetails }) {
-                Text(if (showDetails) "Hide details" else "Details")
-            }
-            if (showDetails) {
-                metadata.describe().forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
-            }
-        }
-        // While the confirmation sheet is up, errors about the answer show there instead.
-        if (voice.confirmation == null) {
-            voice.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        }
+        Text(
+            voice.reply.ifEmpty { "…" },
+            style = type.body,
+            color = colors.textPrimary,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
 @Composable
-private fun TalkButton(
+private fun MicDenied(onOpenAppSettings: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = AlfredTheme.spacing.m)) {
+        Text(
+            "Alfred needs the microphone to hear you.",
+            style = AlfredTheme.typography.bodySmall,
+            color = AlfredTheme.colors.record,
+        )
+        TextButton(onClick = onOpenAppSettings) { Text("Open app settings") }
+    }
+}
+
+@Composable
+private fun BottomRow(
+    persona: String,
     phase: VoicePhase,
-    onPressed: () -> Boolean,
-    onReleased: (Long) -> Unit,
+    micEnabled: Boolean,
+    onOpenProtocol: () -> Unit,
+    onTalkPressed: () -> Boolean,
+    onTalkReleased: (Long) -> Unit,
+    onMicUnavailable: () -> Unit,
 ) {
-    val pressed by rememberUpdatedState(onPressed)
-    val released by rememberUpdatedState(onReleased)
-    val label = talkLabel(phase)
-    val listening = phase == VoicePhase.Listening
-    Surface(
-        shape = OctagonShape,
-        color = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-        contentColor = if (listening) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
-        modifier = Modifier
-            .size(140.dp)
-            .semantics {
-                role = Role.Button
-                contentDescription = label
-                onClick {
-                    // TalkBack's double tap acts as a tap (toggle mode).
-                    if (pressed()) released(0)
-                    true
+    // A Box, not a Row, so the mic stays centred when a long persona name widens its tile.
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        StatTile(
+            label = "Protocol",
+            value = persona,
+            corners = setOf(Corner.TopStart, Corner.BottomEnd),
+            onClick = onOpenProtocol,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .widthIn(min = TILE_WIDTH),
+        )
+        OctagonActionButton(
+            icon = talkIcon(phase),
+            contentDescription = talkLabel(phase),
+            // What TalkBack's double tap does: a tap (toggle mode).
+            onClick = { if (onTalkPressed()) onTalkReleased(0) },
+            onPress = {
+                val start = System.currentTimeMillis()
+                if (onTalkPressed()) {
+                    tryAwaitRelease()
+                    onTalkReleased(System.currentTimeMillis() - start)
                 }
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        val start = System.currentTimeMillis()
-                        if (pressed()) {
-                            tryAwaitRelease()
-                            released(System.currentTimeMillis() - start)
-                        }
-                    },
-                )
             },
+            enabled = micEnabled,
+            onDisabledClick = onMicUnavailable,
+            size = MIC_BUTTON,
+        )
+        // Patrol mode is defined by STU-119; until then it's always off.
+        StatTile(
+            label = "Patrol",
+            value = "Off",
+            corners = setOf(Corner.TopEnd, Corner.BottomStart),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .widthIn(min = TILE_WIDTH),
+        )
+    }
+}
+
+/** The crosshair's sheet: the connection in words, and how the last turn ran. */
+@Composable
+private fun DetailSheet(status: ConnectionStatus, voice: VoiceUiState, onCheckNow: () -> Unit) {
+    val colors = AlfredTheme.colors
+    val type = AlfredTheme.typography
+    val view = status.toView()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = AlfredTheme.spacing.xl)
+            .padding(bottom = AlfredTheme.spacing.xxl),
+        verticalArrangement = Arrangement.spacedBy(AlfredTheme.spacing.s),
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(talkIcon(phase), contentDescription = null, modifier = Modifier.size(56.dp))
+        Text(view.title.uppercase(), style = type.title, color = colors.textPrimary)
+        view.detail?.let { Text(it, style = type.bodySmall, color = colors.textSecondary) }
+        Text("Voice: ${voice.link.describe()}", style = type.bodySmall, color = colors.textSecondary)
+        OutlinedButton(onClick = onCheckNow) { Text("Check now") }
+
+        val last = voice.voice
+        if (last.transcript.isNotEmpty() || last.reply.isNotEmpty()) {
+            HorizontalDivider(Modifier.padding(vertical = AlfredTheme.spacing.s))
+            Text("LAST TURN", style = type.label, color = colors.textSecondary)
+            if (last.transcript.isNotEmpty()) {
+                Text("You: ${last.transcript}", style = type.bodySmall, color = colors.textPrimary)
+            }
+            if (last.reply.isNotEmpty()) {
+                Text("Alfred: ${last.reply}", style = type.bodySmall, color = colors.textPrimary)
+            }
+            last.metadata?.describe()?.forEach {
+                Text(it, style = type.bodySmall, color = colors.textSecondary)
+            }
         }
+        last.error?.let { Text(it, style = type.bodySmall, color = colors.record) }
     }
 }
 
@@ -272,6 +506,8 @@ private fun ConfirmationSheet(
     error: String?,
     onAnswer: (Boolean) -> Unit,
 ) {
+    val colors = AlfredTheme.colors
+    val type = AlfredTheme.typography
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -281,13 +517,14 @@ private fun ConfirmationSheet(
     ) {
         Text(
             if (confirmation.irreversible) "Approve this? It can't be undone." else "Go ahead?",
-            style = MaterialTheme.typography.titleLarge,
+            style = type.title,
+            color = colors.textPrimary,
         )
-        Text(confirmation.summary, style = MaterialTheme.typography.bodyLarge)
+        Text(confirmation.summary, style = type.bodySmall, color = colors.textPrimary)
         if (!confirmation.irreversible) {
-            Text("You can also just say yes or no.", style = MaterialTheme.typography.bodySmall)
+            Text("You can also just say yes or no.", style = type.bodySmall, color = colors.textSecondary)
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        error?.let { Text(it, color = colors.record) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(
                 onClick = { onAnswer(false) },
@@ -317,13 +554,6 @@ private fun talkLabel(phase: VoicePhase): String = when (phase) {
     VoicePhase.Thinking, VoicePhase.Speaking -> "Stop"
 }
 
-private fun talkHint(phase: VoicePhase): String = when (phase) {
-    VoicePhase.Idle -> "Hold to talk, or tap to start"
-    VoicePhase.Listening -> "Listening… let go or tap to send"
-    VoicePhase.Thinking -> "Thinking… tap to stop"
-    VoicePhase.Speaking -> "Speaking… tap to stop"
-}
-
 private fun LinkState.describe(): String = when (this) {
     LinkState.Offline -> "offline"
     LinkState.NotConfigured -> "not set up"
@@ -346,42 +576,49 @@ private fun TurnMetadata.describe(): List<String> = buildList {
     timings["total_ms"]?.let { add("Total: ${it.toLong()} ms") }
 }
 
-private data class StatusView(val title: String, val detail: String?, val icon: ImageVector)
+private data class StatusView(val title: String, val detail: String?)
 
 private fun ConnectionStatus.toView(): StatusView = when (this) {
-    ConnectionStatus.Checking -> StatusView("Checking…", null, Icons.Filled.Sync)
-    ConnectionStatus.Connected -> StatusView("Connected", null, Icons.Filled.CheckCircle)
-    ConnectionStatus.Unauthorised ->
-        StatusView("Unauthorised", "The server rejected the API token.", Icons.Filled.Lock)
+    ConnectionStatus.Checking -> StatusView("Checking…", null)
+    ConnectionStatus.Connected -> StatusView("Connected", null)
+    ConnectionStatus.Unauthorised -> StatusView("Unauthorised", "The server rejected the API token.")
     ConnectionStatus.InvalidToken ->
-        StatusView(
-            "Invalid token",
-            "The API token has characters that can't be sent. Re-enter it in Settings.",
-            Icons.Filled.Lock,
-        )
-    ConnectionStatus.NotConfigured ->
-        StatusView("Not set up", "Enter the server URL and API token in Settings.", Icons.Filled.Settings)
+        StatusView("Invalid token", "The API token has characters that can't be sent. Re-enter it in Settings.")
+    ConnectionStatus.NotConfigured -> StatusView("Not set up", "Enter the server URL and API token in Settings.")
     is ConnectionStatus.Unreachable ->
-        StatusView("Unreachable", "Is Tailscale on and the server running? ($reason)", Icons.Filled.CloudOff)
-    is ConnectionStatus.ServerError ->
-        StatusView("Server error", "The server answered $code.", Icons.Filled.Error)
+        StatusView("Unreachable", "Is Tailscale on and the server running? ($reason)")
+    is ConnectionStatus.ServerError -> StatusView("Server error", "The server answered $code.")
 }
 
-@Preview
+private val HEADER_BUTTON = 44.dp
+
+// Not a local: lint's ConfigurationScreenWidthHeight check crashes resolving it there.
+private val ORB_SIDE = OrbSize.Large.diameter
+/** The design's tile width; a longer persona name widens its tile. */
+private val TILE_WIDTH = 104.dp
+private val MIC_BUTTON = 96.dp
+
+/** The greeting line is a touch bigger than other labels in the design. */
+private const val GREETING_SCALE = 1.2f
+
+@Preview(widthDp = 393, heightDp = 851)
 @Composable
 private fun HomeContentPreview() {
     AlfredTheme {
         GridBackground {
             HomeContent(
                 status = ConnectionStatus.Connected,
-                voice = VoiceUiState(
-                    voice = VoiceState(transcript = "What time is it?", reply = "It's ten past three."),
-                    link = LinkState.Connected("s1", voice = true),
-                ),
+                voice = VoiceUiState(link = LinkState.Connected("s1", voice = true)),
+                level = { 0f },
+                profile = ProfileSettings(),
+                time = LocalTime.of(2, 14),
                 micDenied = false,
+                onOpenMenu = {},
+                onOpenProtocol = {},
                 onCheckNow = {},
                 onTalkPressed = { true },
                 onTalkReleased = {},
+                onMicUnavailable = {},
                 onOpenAppSettings = {},
                 onAnswer = {},
                 onDismissConfirmation = {},
